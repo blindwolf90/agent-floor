@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyEvent, createState, normalizeEvent } from '../shared/protocol.js';
-import { applyStudioEvent, beginStudioAction, bridgeView, createStudioState, latestReport, setStudioSchedule } from '../src/studio/state.js';
+import { applyStudioEvent, beginStudioAction, bridgeView, createStudioState, latestReport, realWorkView, setStudioBridgeConnection, setStudioReal, setStudioSchedule } from '../src/studio/state.js';
 import { createDryRunEvents } from '../sim/dry-run.js';
 
 test('studio events stay out of the existing server protocol', () => {
@@ -52,7 +52,7 @@ test('bridge banner covers unknown, fresh, stale and disconnected states', () =>
   const s = createStudioState();
   assert.match(bridgeView(s, 100_000).text, /状态未知/);
   applyStudioEvent(s, { type: 'bridge_status', mode: 'dry-run', connected: true, last_update_ts: 100_000, note: '模拟' });
-  assert.match(bridgeView(s, 120_000).text, /已连接/);
+  assert.match(bridgeView(s, 120_000).text, /模拟模式/);
   assert.match(bridgeView(s, 161_001).text, /资料过时／断线/);
   applyStudioEvent(s, { type: 'bridge_status', connected: false, last_update_ts: 161_001, note: '模拟' });
   assert.match(bridgeView(s, 161_001).text, /断线/);
@@ -99,4 +99,49 @@ test('schedule board renders provided fields and has an explicit missing state',
   setStudioSchedule(s, null);
   assert.equal(s.schedule.loaded, false);
   assert.deepEqual(s.schedule.items, []);
+});
+
+test('disconnected bridge never turns a claim intent into a confirmation', () => {
+  const s = createStudioState();
+  setStudioBridgeConnection(s, false);
+  beginStudioAction(s, { action: 'claim_request', agent: 'engineer', ts: 10 });
+  assert.equal(s.engineer.taskId, null);
+  assert.equal(s.engineer.claimPending, true);
+  assert.deepEqual(s.reports, {});
+  assert.equal(bridgeView(s, 20).text, '桥接未连接');
+});
+
+test('bridge banner and page title copy cover all three modes plus unknown', () => {
+  const s = createStudioState();
+  assert.equal(bridgeView(s, 1000).title, '状态未知');
+  for (const [mode, title] of [['dry-run', '模拟模式'], ['notion-read', '只读真实工单｜领取仍为模拟'], ['live', '真实模式']]) {
+    applyStudioEvent(s, { type: 'bridge_status', mode, connected: true, last_update_ts: 1000 });
+    assert.equal(bridgeView(s, 2000).text, title);
+    assert.equal(bridgeView(s, 2000).title, title);
+  }
+});
+
+test('approved review clears the nameplate while returned keeps the task marked', () => {
+  const approved = createStudioState();
+  applyStudioEvent(approved, { type: 'claim_confirmed', agent: 'engineer', task_id: 'SIM-003', task_title: '模拟｜验收后清理' });
+  applyStudioEvent(approved, { type: 'report_ready', agent: 'engineer', task_id: 'SIM-003', summary: '模拟｜报告' });
+  applyStudioEvent(approved, { type: 'review_result', task_id: 'SIM-003', result: 'approved' });
+  assert.equal(approved.engineer.taskId, null);
+  assert.equal(approved.engineer.taskTitle, '模拟｜等待领取任务');
+  assert.equal(latestReport(approved), null);
+
+  const returned = createStudioState();
+  applyStudioEvent(returned, { type: 'claim_confirmed', agent: 'engineer', task_id: 'SIM-004', task_title: '模拟｜退回后保留' });
+  applyStudioEvent(returned, { type: 'report_ready', agent: 'engineer', task_id: 'SIM-004', summary: '模拟｜报告' });
+  applyStudioEvent(returned, { type: 'review_result', task_id: 'SIM-004', result: 'returned' });
+  assert.equal(returned.engineer.taskId, 'SIM-004');
+  assert.equal(returned.engineer.taskTitle, '退回修改｜模拟｜退回后保留');
+  assert.equal(latestReport(returned).status, 'rejected');
+});
+
+test('notion-read real work failure has explicit read-error copy', () => {
+  const s = createStudioState();
+  applyStudioEvent(s, { type: 'bridge_status', mode: 'notion-read', connected: true, last_update_ts: 1000 });
+  setStudioReal(s, null);
+  assert.equal(realWorkView(s).text, '真实工单读取失败');
 });

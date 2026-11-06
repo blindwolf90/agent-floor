@@ -3,10 +3,11 @@
 
 export function createStudioState() {
   return {
-    bridge: { received: false, mode: 'dry-run', connected: null, lastUpdateTs: null, note: '模拟｜尚未收到桥接状态' },
+    bridge: { received: false, connection: 'unknown', mode: 'dry-run', connected: null, lastUpdateTs: null, note: '尚未收到桥接状态' },
     engineer: { taskId: null, taskTitle: '模拟｜等待领取任务', blocked: null, claimPending: false, lastRejection: null },
     kimi: { status: '尚未接通' },
     schedule: { loaded: false, updatedAt: null, items: [] },
+    real: { ok: null, working: [], claimable: [], error: null },
     reports: {},
     reportOrder: [],
     reviewPending: {},
@@ -22,7 +23,8 @@ export function applyStudioEvent(state, ev) {
       if (ev.agent === 'kimi') break;
       state.bridge = {
         received: true,
-        mode: 'dry-run',
+        connection: 'connected',
+        mode: state.bridge.mode,
         connected: true,
         lastUpdateTs: Number.isFinite(ev.ts) ? ev.ts : Date.now(),
         note: String(ev.activity || '模拟｜status 心跳保活'),
@@ -32,10 +34,11 @@ export function applyStudioEvent(state, ev) {
     case 'bridge_status':
       state.bridge = {
         received: true,
+        connection: 'connected',
         mode: String(ev.mode || 'dry-run'),
         connected: ev.connected === true,
         lastUpdateTs: Number.isFinite(ev.last_update_ts) ? ev.last_update_ts : null,
-        note: String(ev.note || '模拟｜桥接状态已更新'),
+        note: String(ev.note || '桥接状态已更新'),
       };
       break;
     case 'claim_confirmed':
@@ -87,9 +90,19 @@ export function applyStudioEvent(state, ev) {
       if (approved) {
         delete state.reports[taskId];
         state.reportOrder = state.reportOrder.filter((id) => id !== taskId);
+        if (state.engineer.taskId === taskId) {
+          state.engineer.taskId = null;
+          state.engineer.taskTitle = '模拟｜等待领取任务';
+          state.engineer.blocked = null;
+          state.engineer.claimPending = false;
+        }
         state.notice = `模拟｜${taskId} 验收通过，文件已收回`;
       } else {
         report.status = 'rejected';
+        if (state.engineer.taskId === taskId) {
+          const title = state.engineer.taskTitle.replace(/^退回修改｜/, '');
+          state.engineer.taskTitle = `退回修改｜${title}`;
+        }
         state.notice = `模拟｜${taskId} 退回修改：${report.note}`;
       }
       break;
@@ -118,6 +131,35 @@ export function setStudioSchedule(state, board) {
   return state;
 }
 
+export function setStudioBridgeConnection(state, connected) {
+  state.bridge.connection = connected ? 'connected' : 'disconnected';
+  return state;
+}
+
+export function setStudioReal(state, real) {
+  const read = (items) => Array.isArray(items) ? items.filter((item) => item && typeof item === 'object').map((item) => ({
+    id: String(item.id || '未提供'),
+    title: String(item.title || '未提供'),
+    status: String(item.status || '未提供'),
+    deadline: item.deadline ? String(item.deadline) : '未提供',
+    url: item.url ? String(item.url) : null,
+  })) : [];
+  state.real = {
+    ok: Boolean(real && real.ok === true),
+    working: read(real?.working),
+    claimable: read(real?.claimable),
+    error: real?.error ? String(real.error) : null,
+  };
+  return state;
+}
+
+export function realWorkView(state) {
+  if (state.bridge.mode === 'dry-run') return { kind: 'mode', text: '仅 notion-read 模式提供' };
+  if (state.real.ok === false) return { kind: 'error', text: '真实工单读取失败' };
+  if (state.real.ok === null) return { kind: 'loading', text: '真实工单读取中' };
+  return { kind: 'ready', text: '' };
+}
+
 /** Record the intent only. Confirmation events, never clicks, complete the work. */
 export function beginStudioAction(state, payload) {
   const action = { ...payload, ts: Number.isFinite(payload.ts) ? payload.ts : Date.now() };
@@ -141,15 +183,17 @@ export function latestReport(state) {
 
 export function bridgeView(state, now = Date.now()) {
   const b = state.bridge;
-  if (!b.received) return { text: '模拟模式｜状态未知', stale: true, note: b.note };
+  if (b.connection === 'disconnected') return { text: '桥接未连接', title: '桥接未连接', stale: true, note: b.note };
+  if (!b.received) return { text: '状态未知', title: '状态未知', stale: true, note: b.note };
+  const title = { 'dry-run': '模拟模式', 'notion-read': '只读真实工单｜领取仍为模拟', live: '真实模式' }[b.mode] || '状态未知';
   const stale = !b.connected || !b.lastUpdateTs || now - b.lastUpdateTs > 60_000;
   if (stale) {
     const time = b.lastUpdateTs
       ? new Date(b.lastUpdateTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
       : '未知';
-    return { text: `模拟模式｜资料过时／断线，最后更新 ${time}`, stale: true, note: b.note };
+    return { text: `${title}｜资料过时／断线，最后更新 ${time}`, title, stale: true, note: b.note };
   }
-  return { text: '模拟模式｜桥接已连接（本地模拟）', stale: false, note: b.note };
+  return { text: title, title, stale: false, note: b.note };
 }
 
 export class StudioStore {
@@ -173,6 +217,14 @@ export class StudioStore {
   }
   setSchedule(board) {
     setStudioSchedule(this.state, board);
+    this.emit();
+  }
+  setReal(real) {
+    setStudioReal(this.state, real);
+    this.emit();
+  }
+  setBridgeConnection(connected) {
+    setStudioBridgeConnection(this.state, connected);
     this.emit();
   }
 }
