@@ -427,13 +427,13 @@ export class World {
 
   focusStudio() {
     const room = this.rooms.get('msos');
-    const coo = this.agents.get('coo');
-    const engineer = this.agents.get('engineer');
-    if (!room || !coo || !engineer) return;
+    const team = ['coo', 'engineer', 'kimi'].map((id) => this.agents.get(id));
+    if (!room || team.some((agent) => !agent)) return;
     this.autoFrame = false;
     const { w, d } = room.size;
-    const target = coo.character.root.getWorldPosition(new Vector3())
-      .add(engineer.character.root.getWorldPosition(new Vector3())).multiplyScalar(0.5);
+    const target = new Vector3();
+    for (const agent of team) target.add(agent!.character.root.getWorldPosition(new Vector3()));
+    target.multiplyScalar(1 / team.length);
     target.y = 0.6;
     const dir = new Vector3(0.3, 1.1, 1).normalize();
     // Centre the seats rather than the asymmetric room so both HTML name tags

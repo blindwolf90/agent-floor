@@ -10,12 +10,14 @@ interface StudioHudActions {
   review(taskId: string, result: 'approved' | 'returned', note: string): void;
 }
 
-type ModalKind = 'coo' | 'blocked' | 'report' | null;
+type ModalKind = 'coo' | 'kimi' | 'blocked' | 'report' | null;
 
 export class StudioHud {
   private root = document.createElement('div');
   private banner = document.createElement('div');
   private notice = document.createElement('div');
+  private schedule = document.createElement('aside');
+  private launcher = document.createElement('button');
   private tags = new Map<string, HTMLButtonElement>();
   private file = document.createElement('button');
   private menu = document.createElement('div');
@@ -29,13 +31,20 @@ export class StudioHud {
     this.notice.className = 'studio-notice';
     this.notice.setAttribute('role', 'status');
     this.notice.setAttribute('aria-live', 'polite');
+    this.schedule.className = 'studio-schedule';
+    this.schedule.setAttribute('aria-label', '模拟排程台');
+    this.launcher.type = 'button';
+    this.launcher.className = 'studio-launcher';
+    this.launcher.textContent = '工作室｜领任务';
+    this.launcher.addEventListener('click', () => this.openClaim());
 
     const tagLayer = document.createElement('div');
     tagLayer.className = 'studio-tags';
-    for (const [id, name, role] of [['coo', 'COO', '任务与验收'], ['engineer', 'Engineer', '执行与报告']]) {
+    for (const [id, name, role] of [['coo', 'COO', '任务与验收'], ['engineer', 'Engineer', '执行与报告'], ['kimi', 'Kimi', '前端']]) {
       const tag = document.createElement('button');
       tag.type = 'button';
       tag.className = 'studio-tag';
+      tag.classList.toggle('kimi', id === 'kimi');
       tag.dataset.agent = id;
       tag.innerHTML = `<span class="studio-tag-top"><b>${name}</b><i>${role}</i></span><span class="studio-task"></span>`;
       tag.addEventListener('click', () => this.openAgent(id));
@@ -55,7 +64,7 @@ export class StudioHud {
     this.menu.querySelector('.studio-scrim')!.addEventListener('click', () => this.closeMenu());
 
     this.modal.className = 'studio-modal-wrap';
-    this.root.append(this.banner, tagLayer, this.file, this.notice, this.menu, this.modal);
+    this.root.append(this.banner, tagLayer, this.file, this.schedule, this.launcher, this.notice, this.menu, this.modal);
     container.append(this.root);
     this.studio.subscribe(() => this.render());
     addEventListener('keydown', (event) => {
@@ -87,13 +96,25 @@ export class StudioHud {
     engineer.classList.toggle('blocked', Boolean(state.engineer.blocked));
     engineer.classList.toggle('pending', state.engineer.claimPending);
     this.tags.get('coo')!.querySelector('.studio-task')!.textContent = state.engineer.taskId ? `模拟工单 ${state.engineer.taskId}` : '模拟派单与验收';
+    this.tags.get('kimi')!.querySelector('.studio-task')!.textContent = state.kimi.status;
 
     const claim = this.menu.querySelector<HTMLButtonElement>('.studio-claim')!;
     claim.disabled = state.engineer.claimPending;
     claim.textContent = state.engineer.claimPending ? '已送出领取请求，等待确认' : '向 COO 领任务';
     this.menu.querySelector<HTMLElement>('.studio-menu-reason')!.textContent = state.engineer.lastRejection || '';
+    this.renderSchedule();
     this.renderFile();
     this.renderModal();
+  }
+
+  private renderSchedule() {
+    const schedule = this.studio.state.schedule;
+    if (!schedule.loaded) {
+      this.schedule.innerHTML = '<h2>排程台｜静态清单</h2><p>排程清单未载入</p>';
+      return;
+    }
+    const items = schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : '<li>模拟｜目前没有排程</li>';
+    this.schedule.innerHTML = `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${items}</ol>`;
   }
 
   private renderFile() {
@@ -116,7 +137,8 @@ export class StudioHud {
     for (const anchor of anchors) {
       const tag = this.tags.get(anchor.id);
       if (!tag) continue;
-      tag.style.transform = `translate3d(${safeX(anchor.x, tag)}px,${anchor.y + stageTop}px,0) translate(-50%,-100%)`;
+      const fixedSeatOffset = anchor.id === 'kimi' ? 64 : 0;
+      tag.style.transform = `translate3d(${safeX(anchor.x, tag)}px,${anchor.y + stageTop + fixedSeatOffset}px,0) translate(-50%,-100%)`;
       tag.style.visibility = anchor.visible ? 'visible' : 'hidden';
       tag.style.zIndex = String(1000 - Math.round(anchor.depth * 4));
     }
@@ -128,14 +150,19 @@ export class StudioHud {
 
   openAgent(id: string) {
     if (id === 'coo') this.modalKind = 'coo';
+    else if (id === 'kimi') this.modalKind = 'kimi';
     else if (id === 'engineer' && this.studio.state.engineer.blocked) this.modalKind = 'blocked';
     else if (id === 'engineer') {
-      this.menu.classList.add('show');
-      this.menu.querySelector<HTMLButtonElement>('.studio-claim')!.focus();
+      this.openClaim();
       return;
     }
     this.renderModal();
     this.modal.querySelector<HTMLButtonElement>('button')?.focus();
+  }
+
+  openClaim() {
+    this.menu.classList.add('show');
+    this.menu.querySelector<HTMLButtonElement>('.studio-claim')!.focus();
   }
 
   openReport() {
@@ -156,6 +183,8 @@ export class StudioHud {
     let body = '';
     if (this.modalKind === 'coo') {
       body = `${close}<span class="studio-kicker">COO · 模拟角色</span><h2>任务与验收</h2><p>模拟｜COO 负责确认领取与验收结果。此页面不会连接真实 COO 系统。</p>`;
+    } else if (this.modalKind === 'kimi') {
+      body = `${close}<p class="studio-kimi-message">执行入口待 Engineer 核实</p>`;
     } else if (this.modalKind === 'blocked') {
       const blocked = this.studio.state.engineer.blocked!;
       body = `${close}<span class="studio-kicker">${esc(blocked.taskId)} · 模拟阻塞</span><h2>Engineer 举手了</h2><p class="studio-reason">${esc(blocked.reason)}</p><p class="studio-help">关闭窗口不会清除未解决标记；需由后续 dry-run 事件处理。</p>`;

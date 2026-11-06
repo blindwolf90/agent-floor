@@ -1,4 +1,4 @@
-// ENG-160 Chrome mobile-mode interaction checks + four evidence screenshots.
+// ENG-160 Chrome mobile-mode interaction checks + v1 regression and v2 evidence screenshots.
 // Requires only the Vite server: npm exec vite -- --host 127.0.0.1 --port 5175
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -65,12 +65,26 @@ try {
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
 
   await navigate('default');
-  assert(await evaluate(`Object.keys(__studio.state.reports).length===0 && document.querySelectorAll('.studio-tag').length===2`), 'default must have two roles and no report');
-  const defaultLayout = await evaluate(`({width:document.documentElement.scrollWidth,banner:document.querySelector('.studio-banner').getBoundingClientRect().toJSON(),tags:[...document.querySelectorAll('.studio-tag')].map(e=>({id:e.dataset.agent,visibility:getComputedStyle(e).visibility,...e.getBoundingClientRect().toJSON()}))})`);
+  assert(await evaluate(`Object.keys(__studio.state.reports).length===0 && document.querySelectorAll('.studio-tag').length===3`), 'default must have three roles and no report');
+  const defaultLayout = await evaluate(`({width:document.documentElement.scrollWidth,banner:document.querySelector('.studio-banner').getBoundingClientRect().toJSON(),notice:document.querySelector('.studio-notice').getBoundingClientRect().toJSON(),launcher:document.querySelector('.studio-launcher').getBoundingClientRect().toJSON(),tags:[...document.querySelectorAll('.studio-tag')].map(e=>({id:e.dataset.agent,visibility:getComputedStyle(e).visibility,...e.getBoundingClientRect().toJSON()}))})`);
   assert(defaultLayout.width === 390 && defaultLayout.banner.right <= 390, 'default horizontal overflow');
   assert(defaultLayout.tags.every((tag) => tag.visibility === 'visible' && tag.left >= 0 && tag.right <= 390 && tag.height >= 44), 'role tag clipped or below 44px');
+  assert(defaultLayout.tags.every((a, i) => defaultLayout.tags.slice(i + 1).every((b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)), 'role tags overlap');
+  assert(defaultLayout.launcher.height >= 44 && defaultLayout.launcher.bottom <= defaultLayout.notice.top, 'launcher overlaps bottom notice');
+  assert(await evaluate(`__studio.state.schedule.loaded && document.querySelector('.studio-schedule h2').textContent.includes('更新于 2026-11-06') && document.querySelector('.studio-schedule').textContent.includes('模拟｜晨间领任务检查')`), 'static schedule missing');
+  assert(await evaluate(`__studio.state.kimi.status==='尚未接通' && document.querySelector('[data-agent="kimi"]').textContent.includes('尚未接通')`), 'Kimi seat is not fixed unavailable');
   await shot('default');
+  await shot('v2-default');
+  await shot('v2-schedule');
 
+  await evaluate(`__studio.apply({type:'status',agent:'kimi',status:'working',activity:'工作中',ts:Date.now()})`);
+  assert(await evaluate(`__studio.state.kimi.status==='尚未接通' && !document.body.innerText.includes('工作中')`), 'Kimi accepted a working event');
+  await click('[data-agent="kimi"]');
+  assert(await evaluate(`document.querySelector('.studio-kimi-message')?.textContent==='执行入口待 Engineer 核实'`), 'Kimi fixed message missing');
+  await click('.studio-modal .studio-close');
+  await click('.studio-launcher');
+  assert(await evaluate(`document.querySelector('.studio-menu-wrap').classList.contains('show')`), 'bottom launcher did not open claim menu');
+  await click('.studio-menu-close');
   await click('[data-agent="engineer"]');
   assert(await evaluate(`document.querySelector('.studio-menu-wrap').classList.contains('show')`), 'Engineer menu did not open');
   assert(await evaluate(`document.querySelector('.studio-claim').getBoundingClientRect().height >= 44`), 'claim button below 44px');
@@ -84,9 +98,11 @@ try {
   await click('.studio-file');
   assert(await evaluate(`document.querySelector('.studio-modal-wrap').classList.contains('show')`), 'report did not open');
   await shot('report');
-  const reportLayout = await evaluate(`({width:document.documentElement.scrollWidth,modal:document.querySelector('.studio-modal').getBoundingClientRect().toJSON(),buttons:[...document.querySelectorAll('.studio-modal button')].filter(e=>!e.classList.contains('studio-scrim')).map(e=>({c:e.className,w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))})`);
+  await shot('v2-mobile-launcher');
+  const reportLayout = await evaluate(`(()=>{const launcher=document.querySelector('.studio-launcher');const lr=launcher.getBoundingClientRect();return{width:document.documentElement.scrollWidth,modal:document.querySelector('.studio-modal').getBoundingClientRect().toJSON(),launcher:lr.toJSON(),launcherHit:document.elementFromPoint(lr.left+lr.width/2,lr.top+lr.height/2)===launcher,buttons:[...document.querySelectorAll('.studio-modal button')].filter(e=>!e.classList.contains('studio-scrim')).map(e=>({c:e.className,w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))}})()`);
   assert(reportLayout.width === 390 && reportLayout.modal.right <= 390, 'report modal overflow');
   assert(reportLayout.buttons.every((b) => b.w >= 44 && b.h >= 44), 'report button below 44px');
+  assert(reportLayout.launcherHit && reportLayout.modal.bottom <= reportLayout.launcher.top, 'report modal obscures mobile launcher');
   await click('.studio-approve');
   assert(await evaluate(`__studio.state.reports['SIM-001'].status==='ready' && !!__studio.state.reviewPending['SIM-001']`), 'approval click changed report before confirmation');
   await evaluate(`__studio.apply({type:'review_result',task_id:'SIM-001',result:'approved',note:'模拟｜通过'})`);
@@ -107,7 +123,7 @@ try {
 
   const origins = await evaluate(`[...new Set(performance.getEntriesByType('resource').map(e=>new URL(e.name).origin))]`);
   assert(origins.every((origin) => origin === new URL(base).origin), 'unexpected external resource');
-  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason'], externalOrigins: origins, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png'] };
+  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Kimi fixed message', 'mobile launcher', 'Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason'], externalOrigins: origins, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png', 'v2-default.png', 'v2-schedule.png', 'v2-mobile-launcher.png'] };
   fs.writeFileSync(path.join(out, 'browser-checks.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {

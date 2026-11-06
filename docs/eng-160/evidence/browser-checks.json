@@ -3,6 +3,8 @@
   "viewport": "390x844",
   "mobileEmulation": true,
   "coordinateClicks": [
+    "Kimi fixed message",
+    "mobile launcher",
     "Engineer menu",
     "claim_request",
     "report file",
@@ -17,6 +19,9 @@
     "default.png",
     "waiting.png",
     "report.png",
-    "offline.png"
+    "offline.png",
+    "v2-default.png",
+    "v2-schedule.png",
+    "v2-mobile-launcher.png"
   ]
 }

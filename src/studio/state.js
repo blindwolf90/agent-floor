@@ -5,6 +5,8 @@ export function createStudioState() {
   return {
     bridge: { received: false, mode: 'dry-run', connected: null, lastUpdateTs: null, note: '模拟｜尚未收到桥接状态' },
     engineer: { taskId: null, taskTitle: '模拟｜等待领取任务', blocked: null, claimPending: false, lastRejection: null },
+    kimi: { status: '尚未接通' },
+    schedule: { loaded: false, updatedAt: null, items: [] },
     reports: {},
     reportOrder: [],
     reviewPending: {},
@@ -16,6 +18,17 @@ export function createStudioState() {
 export function applyStudioEvent(state, ev) {
   if (!ev || typeof ev !== 'object') return state;
   switch (ev.type) {
+    case 'status': {
+      if (ev.agent === 'kimi') break;
+      state.bridge = {
+        received: true,
+        mode: 'dry-run',
+        connected: true,
+        lastUpdateTs: Number.isFinite(ev.ts) ? ev.ts : Date.now(),
+        note: String(ev.activity || '模拟｜status 心跳保活'),
+      };
+      break;
+    }
     case 'bridge_status':
       state.bridge = {
         received: true,
@@ -85,6 +98,26 @@ export function applyStudioEvent(state, ev) {
   return state;
 }
 
+export function setStudioSchedule(state, board) {
+  if (!board || !Array.isArray(board.items)) {
+    state.schedule = { loaded: false, updatedAt: null, items: [] };
+    return state;
+  }
+  state.schedule = {
+    loaded: true,
+    updatedAt: board.updatedAt ? String(board.updatedAt) : '日期未提供',
+    items: board.items.filter((item) => item && typeof item === 'object').map((item) => ({
+      name: String(item.name || '模拟｜未命名排程'),
+      owner: String(item.owner || '未提供'),
+      time: String(item.time || '未提供'),
+      source: String(item.source || '未提供'),
+      lastResult: String(item.lastResult || '未提供'),
+      control: String(item.control || '未提供'),
+    })),
+  };
+  return state;
+}
+
 /** Record the intent only. Confirmation events, never clicks, complete the work. */
 export function beginStudioAction(state, payload) {
   const action = { ...payload, ts: Number.isFinite(payload.ts) ? payload.ts : Date.now() };
@@ -137,5 +170,9 @@ export class StudioStore {
     const action = beginStudioAction(this.state, payload);
     this.emit();
     return action;
+  }
+  setSchedule(board) {
+    setStudioSchedule(this.state, board);
+    this.emit();
   }
 }

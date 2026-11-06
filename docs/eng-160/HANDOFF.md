@@ -1,6 +1,8 @@
 # ENG-160-UI — MSOS 工作室 dry-run 前端
 
-## STATUS
+> 当前版本见 `HANDOFF_V2.md`；本文件保留 v1 基线记录。
+
+## v1 STATUS
 
 DONE（前端 dry-run）。基线 `main@c5422bb`，分支 `kimi/studio-ui`。未连接任何真实系统，未修改 Agent Floor server、`shared/protocol.js`、bridge 或 arthur-os。
 

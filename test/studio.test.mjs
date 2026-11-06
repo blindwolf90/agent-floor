@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEvent } from '../shared/protocol.js';
-import { applyStudioEvent, beginStudioAction, bridgeView, createStudioState, latestReport } from '../src/studio/state.js';
+import { applyEvent, createState, normalizeEvent } from '../shared/protocol.js';
+import { applyStudioEvent, beginStudioAction, bridgeView, createStudioState, latestReport, setStudioSchedule } from '../src/studio/state.js';
 import { createDryRunEvents } from '../sim/dry-run.js';
 
 test('studio events stay out of the existing server protocol', () => {
@@ -60,8 +60,43 @@ test('bridge banner covers unknown, fresh, stale and disconnected states', () =>
 
 test('simulator includes every dry-run event in a deterministic order', () => {
   const events = createDryRunEvents(1000);
-  assert.deepEqual(events.map((e) => e.type), ['bridge_status', 'claim_rejected', 'claim_confirmed', 'blocked', 'report_ready', 'review_result']);
+  assert.deepEqual(events.map((e) => e.type), ['bridge_status', 'status', 'claim_rejected', 'claim_confirmed', 'blocked', 'report_ready', 'review_result']);
   assert.equal(events.filter((e) => e.type === 'claim_rejected').length, 1);
   assert.equal(events.filter((e) => e.type === 'blocked').length, 1);
+  const heartbeat = events.find((e) => e.type === 'status');
+  assert.equal(heartbeat.ts, 61_000);
+  assert.equal('status' in heartbeat, false, 'heartbeat must not assign a replacement status');
+  assert.ok(events.every((e) => e.type !== 'join'));
   assert.ok(events.every((e) => !e.task_id || e.task_id.startsWith('SIM-')));
+});
+
+test('Kimi seat stays unavailable for every work-like event', () => {
+  const s = createStudioState();
+  applyStudioEvent(s, { type: 'status', agent: 'kimi', status: 'working', activity: '工作中', ts: 10 });
+  applyStudioEvent(s, { type: 'claim_confirmed', agent: 'kimi', task_id: 'SIM-002', task_title: '模拟｜不应领取' });
+  applyStudioEvent(s, { type: 'report_ready', agent: 'kimi', task_id: 'SIM-002', summary: '模拟｜不应出现' });
+  assert.equal(s.kimi.status, '尚未接通');
+  assert.equal(s.bridge.received, false);
+  assert.deepEqual(s.reports, {});
+});
+
+test('60-second status heartbeat preserves a completed role', () => {
+  const world = createState();
+  applyEvent(world, normalizeEvent({ type: 'join', agent: 'coo', team: 'MSOS 工作室', ts: 1 }));
+  applyEvent(world, normalizeEvent({ type: 'status', agent: 'coo', status: 'done', ts: 2 }));
+  applyEvent(world, normalizeEvent({ type: 'status', agent: 'coo', activity: '模拟｜60 秒心跳保活', ts: 60_002 }));
+  assert.equal(world.agents.coo.status, 'done');
+  assert.equal(world.agents.coo.lastSeen, 60_002);
+});
+
+test('schedule board renders provided fields and has an explicit missing state', () => {
+  const s = createStudioState();
+  assert.equal(s.schedule.loaded, false);
+  setStudioSchedule(s, { updatedAt: '2026-11-06', items: [{ name: '模拟｜排程', owner: '模拟 COO', time: '09:17', source: '模拟来源', lastResult: '模拟｜等待确认', control: '模拟｜仅展示' }] });
+  assert.equal(s.schedule.loaded, true);
+  assert.equal(s.schedule.updatedAt, '2026-11-06');
+  assert.deepEqual(Object.keys(s.schedule.items[0]), ['name', 'owner', 'time', 'source', 'lastResult', 'control']);
+  setStudioSchedule(s, null);
+  assert.equal(s.schedule.loaded, false);
+  assert.deepEqual(s.schedule.items, []);
 });
