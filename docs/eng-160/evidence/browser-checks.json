@@ -10,11 +10,16 @@
     "report file",
     "approve",
     "return",
-    "blocked reason"
+    "blocked reason",
+    "local bridge end-to-end",
+    "offline claim refusal"
   ],
   "externalOrigins": [
     "http://127.0.0.1:5175"
   ],
+  "bridgeEndToEnd": "dry-run only",
+  "notionReadCapture": "synthetic; no Notion read",
+  "offlineFakeConfirmation": false,
   "screenshots": [
     "default.png",
     "waiting.png",
@@ -22,6 +27,9 @@
     "offline.png",
     "v2-default.png",
     "v2-schedule.png",
-    "v2-mobile-launcher.png"
+    "v2-mobile-launcher.png",
+    "v3-notion-read.png",
+    "v3-approved.png",
+    "v3-disconnected.png"
   ]
 }

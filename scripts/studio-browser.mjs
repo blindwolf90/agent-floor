@@ -43,8 +43,9 @@ try {
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
-  const navigate = async (capture) => {
-    await send('Page.navigate', { url: `${base}/?studio&capture=${capture}` });
+  const navigate = async (query) => {
+    const suffix = query.includes('=') ? query : `capture=${query}`;
+    await send('Page.navigate', { url: `${base}/?studio&${suffix}` });
     await wait(5500);
   };
   const click = async (selector) => {
@@ -59,6 +60,14 @@ try {
     console.log(`[模拟截图] ${name}.png`);
   };
   const assert = (value, message) => { if (!value) throw new Error(message); };
+  const waitFor = async (expression, message, timeout = 10_000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeout) {
+      if (await evaluate(expression)) return;
+      await wait(150);
+    }
+    throw new Error(message);
+  };
 
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -123,11 +132,43 @@ try {
 
   const origins = await evaluate(`[...new Set(performance.getEntriesByType('resource').map(e=>new URL(e.name).origin))]`);
   assert(origins.every((origin) => origin === new URL(base).origin), 'unexpected external resource');
-  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Kimi fixed message', 'mobile launcher', 'Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason'], externalOrigins: origins, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png', 'v2-default.png', 'v2-schedule.png', 'v2-mobile-launcher.png'] };
+
+  // v3 synthetic display evidence only: this capture never reads Notion.
+  await navigate('capture=notion-read');
+  assert(await evaluate(`document.querySelector('.studio-bridge').textContent==='只读真实工单｜领取仍为模拟' && document.title==='MSOS 工作室 · 只读真实工单｜领取仍为模拟'`), 'notion-read banner or title missing');
+  assert(await evaluate(`document.querySelectorAll('.studio-real-group').length===2 && document.querySelector('.studio-real').textContent.includes('SIM-READ-001') && document.querySelector('.studio-real').textContent.includes('SIM-READ-002') && document.querySelectorAll('.studio-real a[href^="https://app.notion.com/"]').length===2 && document.querySelectorAll('.studio-real button').length===0`), 'read-only real work list is incomplete or has an action');
+  await evaluate(`document.querySelector('.studio-schedule').scrollTop=document.querySelector('.studio-schedule').scrollHeight`);
+  await shot('v3-notion-read');
+
+  // Real local transport, simulated business data: SSE confirmation drives every state change.
+  await navigate('bridge=http://127.0.0.1:4318');
+  assert(await evaluate(`__studio.state.bridge.mode==='dry-run' && __studio.state.bridge.connection==='connected' && document.querySelector('.studio-real-message').textContent==='仅 notion-read 模式提供'`), 'local bridge dry-run state missing');
+  await click('[data-agent="engineer"]');
+  await click('.studio-claim');
+  await waitFor(`__studio.state.engineer.taskId!==null`, 'bridge did not confirm claim');
+  await waitFor(`Object.keys(__studio.state.reports).length===1`, 'bridge did not deliver report');
+  await click('.studio-file');
+  await click('.studio-approve');
+  await waitFor(`__studio.state.engineer.taskId===null && Object.keys(__studio.state.reports).length===0`, 'approved review did not clear task and report');
+  assert(await evaluate(`document.querySelector('[data-agent="engineer"]').textContent.includes('等待领取任务') && !document.querySelector('.studio-file').classList.contains('show')`), 'approved nameplate or file did not reset');
+  await shot('v3-approved');
+
+  // A refused bridge connection must not fall back to local confirmations.
+  await navigate('bridge=http://127.0.0.1:4999');
+  assert(await evaluate(`document.querySelector('.studio-bridge').textContent==='桥接未连接' && document.title==='MSOS 工作室 · 桥接未连接'`), 'disconnected bridge banner missing');
+  await click('[data-agent="engineer"]');
+  await click('.studio-claim');
+  await waitFor(`__studio.state.notice.includes('桥接未接受请求')`, 'offline action failure was not shown');
+  assert(await evaluate(`__studio.state.engineer.taskId===null && Object.keys(__studio.state.reports).length===0`), 'offline bridge produced a fake confirmation');
+  await shot('v3-disconnected');
+
+  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Kimi fixed message', 'mobile launcher', 'Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason', 'local bridge end-to-end', 'offline claim refusal'], externalOrigins: origins, bridgeEndToEnd: 'dry-run only', notionReadCapture: 'synthetic; no Notion read', offlineFakeConfirmation: false, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png', 'v2-default.png', 'v2-schedule.png', 'v2-mobile-launcher.png', 'v3-notion-read.png', 'v3-approved.png', 'v3-disconnected.png'] };
   fs.writeFileSync(path.join(out, 'browser-checks.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (ws) ws.close();
-  chrome.kill('SIGTERM');
-  fs.rmSync(profile, { recursive: true, force: true });
+  if (chrome.exitCode === null && chrome.signalCode === null) {
+    await new Promise((resolve) => { chrome.once('exit', resolve); chrome.kill('SIGTERM'); setTimeout(resolve, 2000); });
+  }
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

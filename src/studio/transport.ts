@@ -1,5 +1,9 @@
-// Local dry-run /actions handler. The Request is a real POST-shaped request,
-// but it is resolved here and never passed to the network or the Agent Floor server.
+// Studio action transport.
+// Default (?studio): controlled transport to the local MSOS bridge (http://127.0.0.1:4318, override with ?bridge=).
+//   POST /actions carries the intent only; results arrive as bridge events on GET /studio/events (SSE).
+// Kimi's local dry-run handler stays for ?simulate and ?capture (UI evidence runs), and never touches the network.
+import type { StudioEvent, StudioRealState } from './state';
+
 export type StudioActionPayload = {
   action: 'claim_request' | 'review';
   agent?: string;
@@ -9,15 +13,47 @@ export type StudioActionPayload = {
   ts: number;
 };
 
+const params = new URLSearchParams(location.search);
+export const BRIDGE = (params.get('bridge') || 'http://127.0.0.1:4318').replace(/\/$/, '');
+export const useBridge = !params.has('simulate') && !params.has('capture');
+
 export const dryRunActionRequests: StudioActionPayload[] = [];
 
 export async function postStudioAction(payload: StudioActionPayload): Promise<Response> {
+  if (useBridge) {
+    const res = await fetch(BRIDGE + '/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status !== 202) throw new Error('bridge refused: ' + res.status);
+    return res;
+  }
   const request = new Request('/actions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   return localActionHandler(request);
+}
+
+/** Bridge events → studio state. EventSource reconnects by itself; the bridge replays current state on connect. */
+export function subscribeBridge(dispatch: (event: StudioEvent) => void, onConnection: (connected: boolean) => void): EventSource {
+  const es = new EventSource(BRIDGE + '/studio/events');
+  es.onopen = () => onConnection(true);
+  es.onerror = () => onConnection(false);
+  es.onmessage = (e) => {
+    onConnection(true);
+    try { dispatch(JSON.parse(e.data)); } catch { /* ignore malformed frames */ }
+  };
+  return es;
+}
+
+export async function fetchStudioState(): Promise<{ mode?: string; real?: StudioRealState | null }> {
+  const response = await fetch(BRIDGE + '/studio/state', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error('bridge state unavailable: ' + response.status);
+  return response.json();
 }
 
 async function localActionHandler(request: Request): Promise<Response> {
