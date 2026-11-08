@@ -26,8 +26,10 @@ try {
   await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
   let id = 0;
   const pending = new Map();
+  const actionRequests = [];
   ws.addEventListener('message', (event) => {
     const data = JSON.parse(event.data);
+    if (data.method === 'Network.requestWillBeSent' && new URL(data.params.request.url).pathname === '/actions') actionRequests.push(data.params.request.url);
     if (!data.id || !pending.has(data.id)) return;
     const { resolve, reject } = pending.get(data.id);
     pending.delete(data.id);
@@ -70,6 +72,7 @@ try {
   };
 
   await send('Page.enable');
+  await send('Network.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
 
@@ -78,7 +81,7 @@ try {
   const defaultLayout = await evaluate(`({width:document.documentElement.scrollWidth,banner:document.querySelector('.studio-banner').getBoundingClientRect().toJSON(),notice:document.querySelector('.studio-notice').getBoundingClientRect().toJSON(),launcher:document.querySelector('.studio-launcher').getBoundingClientRect().toJSON(),tags:[...document.querySelectorAll('.studio-tag')].map(e=>({id:e.dataset.agent,visibility:getComputedStyle(e).visibility,...e.getBoundingClientRect().toJSON()}))})`);
   assert(defaultLayout.width === 390 && defaultLayout.banner.right <= 390, 'default horizontal overflow');
   assert(defaultLayout.tags.every((tag) => tag.visibility === 'visible' && tag.left >= 0 && tag.right <= 390 && tag.height >= 44), 'role tag clipped or below 44px');
-  assert(defaultLayout.tags.every((a, i) => defaultLayout.tags.slice(i + 1).every((b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)), 'role tags overlap');
+  assert(defaultLayout.tags.every((a, i) => defaultLayout.tags.slice(i + 1).every((b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)), `role tags overlap: ${JSON.stringify(defaultLayout.tags)}`);
   assert(defaultLayout.launcher.height >= 44 && defaultLayout.launcher.bottom <= defaultLayout.notice.top, 'launcher overlaps bottom notice');
   assert(await evaluate(`__studio.state.schedule.loaded && document.querySelector('.studio-schedule h2').textContent.includes('更新于 2026-11-06') && document.querySelector('.studio-schedule').textContent.includes('模拟｜晨间领任务检查')`), 'static schedule missing');
   assert(await evaluate(`__studio.state.kimi.status==='尚未接通' && document.querySelector('[data-agent="kimi"]').textContent.includes('尚未接通')`), 'Kimi seat is not fixed unavailable');
@@ -135,7 +138,7 @@ try {
 
   // v3 synthetic display evidence only: this capture never reads Notion.
   await navigate('capture=notion-read');
-  assert(await evaluate(`document.querySelector('.studio-bridge').textContent==='只读真实工单｜领取仍为模拟' && document.title==='MSOS 工作室 · 只读真实工单｜领取仍为模拟'`), 'notion-read banner or title missing');
+  assert(await evaluate(`document.querySelector('.studio-bridge').textContent==='只读真实工单｜真实领取未开放' && document.title==='MSOS 工作室 · 只读真实工单｜真实领取未开放'`), 'notion-read banner or title missing');
   assert(await evaluate(`document.querySelectorAll('.studio-real-group').length===2 && document.querySelector('.studio-real').textContent.includes('SIM-READ-001') && document.querySelector('.studio-real').textContent.includes('SIM-READ-002') && document.querySelectorAll('.studio-real a[href^="https://app.notion.com/"]').length===2 && document.querySelectorAll('.studio-real button').length===0`), 'read-only real work list is incomplete or has an action');
   await evaluate(`document.querySelector('.studio-schedule').scrollTop=document.querySelector('.studio-schedule').scrollHeight`);
   await shot('v3-notion-read');
@@ -143,6 +146,8 @@ try {
   // Real local transport, simulated business data: SSE confirmation drives every state change.
   await navigate('bridge=http://127.0.0.1:4318');
   assert(await evaluate(`__studio.state.bridge.mode==='dry-run' && __studio.state.bridge.connection==='connected' && document.querySelector('.studio-real-message').textContent==='仅 notion-read 模式提供'`), 'local bridge dry-run state missing');
+  assert(await evaluate(`!document.querySelector('.studio-launcher').disabled && document.querySelector('[data-agent="engineer"]').textContent.includes('模拟｜')`), 'dry-run claim entry or simulated nameplate missing');
+  await shot('v4-dry-run');
   await click('[data-agent="engineer"]');
   await click('.studio-claim');
   await waitFor(`__studio.state.engineer.taskId!==null`, 'bridge did not confirm claim');
@@ -162,7 +167,28 @@ try {
   assert(await evaluate(`__studio.state.engineer.taskId===null && Object.keys(__studio.state.reports).length===0`), 'offline bridge produced a fake confirmation');
   await shot('v3-disconnected');
 
-  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Kimi fixed message', 'mobile launcher', 'Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason', 'local bridge end-to-end', 'offline claim refusal'], externalOrigins: origins, bridgeEndToEnd: 'dry-run only', notionReadCapture: 'synthetic; no Notion read', offlineFakeConfirmation: false, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png', 'v2-default.png', 'v2-schedule.png', 'v2-mobile-launcher.png', 'v3-notion-read.png', 'v3-approved.png', 'v3-disconnected.png'] };
+  // v4 notion-read uses the unchanged local bridge with a local fake query endpoint only.
+  await navigate('bridge=http://127.0.0.1:4319');
+  assert(await evaluate(`__studio.state.bridge.mode==='notion-read' && __studio.state.real.ok===true`), 'notion-read local bridge state missing');
+  assert(await evaluate(`document.querySelector('.studio-real-counts').textContent==='开放3｜可领取0｜进行中1｜被挡住1｜待验收1'`), 'real work counts missing or wrong');
+  assert(await evaluate(`JSON.stringify([...document.querySelectorAll('.studio-real-group')].map(e=>e.dataset.group))==='["claimable","working"]' && document.querySelector('[data-group="claimable"]').textContent.includes('目前没有可领取的单')`), 'claimable order or empty state wrong');
+  assert(await evaluate(`document.querySelectorAll('.studio-real button').length===0`), 'read-only list contains a button');
+  assert(await evaluate(`document.querySelector('.studio-launcher').disabled && document.querySelector('.studio-launcher').textContent==='只读模式，真实领取未开放'`), 'read-only launcher is not disabled with reason');
+  assert(await evaluate(`document.querySelector('[data-agent="engineer"]').querySelector('.studio-task').textContent==='等待领取（只读模式，暂不可领）' && document.querySelector('.studio-notice').textContent==='等待领取（只读模式，暂不可领）'`), 'notion-read nameplate or notice wrong');
+  assert(await evaluate(`(()=>{const t=document.querySelector('[data-agent="engineer"]').querySelector('.studio-task');const l=document.querySelector('.studio-launcher');return t.scrollWidth<=t.clientWidth+1&&l.scrollWidth<=l.clientWidth+1})()`), 'read-only nameplate or launcher copy is clipped');
+  assert(await evaluate(`!document.querySelector('.studio-banner').textContent.includes('模拟') && ![...document.querySelectorAll('.studio-tag')].some(e=>e.textContent.includes('模拟')) && !document.querySelector('.studio-notice').textContent.includes('模拟')`), 'notion-read chrome still contains simulated copy');
+  const notionActionsBefore = actionRequests.length;
+  await click('.studio-launcher');
+  assert(await evaluate(`!document.querySelector('.studio-menu-wrap').classList.contains('show')`), 'disabled launcher opened claim menu');
+  await click('[data-agent="engineer"]');
+  assert(await evaluate(`document.querySelector('.studio-claim').disabled && document.querySelector('.studio-menu-reason').textContent==='只读模式，真实领取未开放'`), 'read-only role menu is not disabled with reason');
+  await click('.studio-claim');
+  await wait(300);
+  assert(actionRequests.length === notionActionsBefore && await evaluate(`__studio.state.actions.length===0`), 'notion-read click sent a claim action');
+  await evaluate(`document.querySelector('.studio-menu-wrap').classList.remove('show');document.querySelector('.studio-schedule').scrollTop=document.querySelector('.studio-real').offsetTop-8`);
+  await shot('v4-notion-read');
+
+  const report = { passed: true, viewport: '390x844', mobileEmulation: true, coordinateClicks: ['Kimi fixed message', 'mobile launcher', 'Engineer menu', 'claim_request', 'report file', 'approve', 'return', 'blocked reason', 'local bridge end-to-end', 'offline claim refusal', 'notion-read disabled claim'], externalOrigins: origins, bridgeEndToEnd: 'dry-run plus local-only notion-read', notionReadCapture: 'synthetic; no Notion read', notionReadBridge: 'local fake query endpoint; no real Notion', notionReadClaimRequests: actionRequests.length - notionActionsBefore, offlineFakeConfirmation: false, screenshots: ['default.png', 'waiting.png', 'report.png', 'offline.png', 'v2-default.png', 'v2-schedule.png', 'v2-mobile-launcher.png', 'v3-notion-read.png', 'v3-approved.png', 'v3-disconnected.png', 'v4-dry-run.png', 'v4-notion-read.png'] };
   fs.writeFileSync(path.join(out, 'browser-checks.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {

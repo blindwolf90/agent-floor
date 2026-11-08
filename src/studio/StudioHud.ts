@@ -1,5 +1,5 @@
 import type { Anchor } from '../world/World';
-import { bridgeView, latestReport, realWorkView, StudioStore, type StudioReport, type StudioRealTicket } from './state';
+import { bridgeView, canStudioClaim, latestReport, realCountsView, realGroupEmptyText, realWorkView, StudioStore, type StudioRealCounts, type StudioReport, type StudioRealTicket } from './state';
 
 function esc(value: string) {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -96,23 +96,31 @@ export class StudioHud {
 
   private render() {
     const state = this.studio.state;
+    const readOnly = !canStudioClaim(state);
     this.tick();
-    this.notice.textContent = state.notice;
+    this.notice.textContent = readOnly ? '等待领取（只读模式，暂不可领）' : state.notice;
     const engineer = this.tags.get('engineer')!;
-    engineer.querySelector('.studio-task')!.textContent = state.engineer.blocked
-      ? '举手 · 点击查看阻塞原因'
-      : state.engineer.claimPending
-        ? '已送出领取请求，等待确认'
-        : state.engineer.taskTitle;
-    engineer.classList.toggle('blocked', Boolean(state.engineer.blocked));
-    engineer.classList.toggle('pending', state.engineer.claimPending);
-    this.tags.get('coo')!.querySelector('.studio-task')!.textContent = state.engineer.taskId ? `模拟工单 ${state.engineer.taskId}` : '模拟派单与验收';
+    engineer.querySelector('.studio-task')!.textContent = readOnly
+      ? '等待领取（只读模式，暂不可领）'
+      : state.engineer.blocked
+        ? '举手 · 点击查看阻塞原因'
+        : state.engineer.claimPending
+          ? '已送出领取请求，等待确认'
+          : state.engineer.taskTitle;
+    engineer.classList.toggle('blocked', !readOnly && Boolean(state.engineer.blocked));
+    engineer.classList.toggle('pending', !readOnly && state.engineer.claimPending);
+    engineer.classList.toggle('read-only', readOnly);
+    this.tags.get('coo')!.querySelector('.studio-task')!.textContent = readOnly
+      ? '只读工单与验收'
+      : state.engineer.taskId ? `模拟工单 ${state.engineer.taskId}` : '模拟派单与验收';
     this.tags.get('kimi')!.querySelector('.studio-task')!.textContent = state.kimi.status;
 
+    this.launcher.disabled = readOnly;
+    this.launcher.textContent = readOnly ? '只读模式，真实领取未开放' : '工作室｜领任务';
     const claim = this.menu.querySelector<HTMLButtonElement>('.studio-claim')!;
-    claim.disabled = state.engineer.claimPending;
+    claim.disabled = readOnly || state.engineer.claimPending;
     claim.textContent = state.engineer.claimPending ? '已送出领取请求，等待确认' : '向 COO 领任务';
-    this.menu.querySelector<HTMLElement>('.studio-menu-reason')!.textContent = state.engineer.lastRejection || '';
+    this.menu.querySelector<HTMLElement>('.studio-menu-reason')!.textContent = readOnly ? '只读模式，真实领取未开放' : state.engineer.lastRejection || '';
     this.renderSchedule();
     this.renderFile();
     this.renderModal();
@@ -120,8 +128,9 @@ export class StudioHud {
 
   private renderSchedule() {
     const schedule = this.studio.state.schedule;
+    const empty = schedule.simulated ? '模拟｜目前没有排程' : '目前没有排程';
     const scheduleBody = schedule.loaded
-      ? `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : '<li>模拟｜目前没有排程</li>'}</ol>`
+      ? `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : `<li>${empty}</li>`}</ol>`
       : '<h2>排程台｜静态清单</h2><p>排程清单未载入</p>';
     this.schedule.innerHTML = scheduleBody + this.realMarkup();
   }
@@ -130,17 +139,21 @@ export class StudioHud {
     const state = this.studio.state;
     const view = realWorkView(state);
     const body = view.kind === 'ready'
-      ? this.realGroup('进行中', state.real.working) + this.realGroup('可领取', state.real.claimable)
+      ? this.realCounts(state.real.counts) + this.realGroup('可领取', state.real.claimable, 'claimable') + this.realGroup('进行中', state.real.working, 'working')
       : `<p class="studio-real-message">${view.text}</p>`;
     return `<section class="studio-real"><h2>真实工单（只读）</h2>${body}</section>`;
   }
 
-  private realGroup(label: string, items: StudioRealTicket[]) {
+  private realCounts(counts: StudioRealCounts) {
+    return `<p class="studio-real-counts">${realCountsView(counts)}</p>`;
+  }
+
+  private realGroup(label: string, items: StudioRealTicket[], group: string) {
     const body = items.length ? `<ul>${items.map((item) => {
       const url = safeUrl(item.url);
       return `<li><strong>${esc(item.id)}</strong><span>${esc(item.title)}</span><small>${esc(item.status)}｜截止 ${esc(item.deadline)}</small>${url ? `<a href="${url}" target="_blank" rel="noreferrer">Notion ↗</a>` : ''}</li>`;
-    }).join('')}</ul>` : '<p>目前没有工单</p>';
-    return `<section class="studio-real-group"><h3>${label}</h3>${body}</section>`;
+    }).join('')}</ul>` : `<p>${realGroupEmptyText(group, items)}</p>`;
+    return `<section class="studio-real-group" data-group="${group}"><h3>${label}</h3>${body}</section>`;
   }
 
   private renderFile() {

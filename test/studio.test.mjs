@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyEvent, createState, normalizeEvent } from '../shared/protocol.js';
-import { applyStudioEvent, beginStudioAction, bridgeView, createStudioState, latestReport, realWorkView, setStudioBridgeConnection, setStudioReal, setStudioSchedule } from '../src/studio/state.js';
+import { applyStudioEvent, beginStudioAction, bridgeView, canStudioClaim, createStudioState, latestReport, realCountsView, realGroupEmptyText, realWorkView, setStudioBridgeConnection, setStudioReal, setStudioSchedule } from '../src/studio/state.js';
 import { createDryRunEvents } from '../sim/dry-run.js';
 
 test('studio events stay out of the existing server protocol', () => {
@@ -96,6 +96,10 @@ test('schedule board renders provided fields and has an explicit missing state',
   assert.equal(s.schedule.loaded, true);
   assert.equal(s.schedule.updatedAt, '2026-11-06');
   assert.deepEqual(Object.keys(s.schedule.items[0]), ['name', 'owner', 'time', 'source', 'lastResult', 'control']);
+  setStudioSchedule(s, { source: 'COO', updatedAt: '2026-11-08', items: [{ name: '模拟｜晨间检查', owner: '模拟 COO', time: '09:17', source: 'COO', lastResult: '模拟｜完成', control: '模拟｜仅展示' }] });
+  assert.equal(s.schedule.updatedAt, '2026-11-08');
+  assert.equal(s.schedule.simulated, false);
+  assert.ok(Object.values(s.schedule.items[0]).every((value) => !value.includes('模拟')));
   setStudioSchedule(s, null);
   assert.equal(s.schedule.loaded, false);
   assert.deepEqual(s.schedule.items, []);
@@ -114,7 +118,7 @@ test('disconnected bridge never turns a claim intent into a confirmation', () =>
 test('bridge banner and page title copy cover all three modes plus unknown', () => {
   const s = createStudioState();
   assert.equal(bridgeView(s, 1000).title, '状态未知');
-  for (const [mode, title] of [['dry-run', '模拟模式'], ['notion-read', '只读真实工单｜领取仍为模拟'], ['live', '真实模式']]) {
+  for (const [mode, title] of [['dry-run', '模拟模式'], ['notion-read', '只读真实工单｜真实领取未开放'], ['live', '真实模式']]) {
     applyStudioEvent(s, { type: 'bridge_status', mode, connected: true, last_update_ts: 1000 });
     assert.equal(bridgeView(s, 2000).text, title);
     assert.equal(bridgeView(s, 2000).title, title);
@@ -144,4 +148,28 @@ test('notion-read real work failure has explicit read-error copy', () => {
   applyStudioEvent(s, { type: 'bridge_status', mode: 'notion-read', connected: true, last_update_ts: 1000 });
   setStudioReal(s, null);
   assert.equal(realWorkView(s).text, '真实工单读取失败');
+});
+
+test('notion-read claim intent is blocked before recording or transport', () => {
+  const s = createStudioState();
+  applyStudioEvent(s, { type: 'bridge_status', mode: 'notion-read', connected: true, last_update_ts: 1000 });
+  assert.equal(canStudioClaim(s), false);
+  beginStudioAction(s, { action: 'claim_request', agent: 'engineer', ts: 2000 });
+  assert.deepEqual(s.actions, []);
+  assert.equal(s.engineer.claimPending, false);
+  assert.equal(s.engineer.taskId, null);
+  assert.equal(s.notice, '等待领取（只读模式，暂不可领）');
+});
+
+test('real work counts render all five values including zero', () => {
+  const s = createStudioState();
+  setStudioReal(s, { ok: true, counts: { open: 5, claimable: 2, working: 1, blocked: 0, review: 2 } });
+  assert.equal(realCountsView(s.real.counts), '开放5｜可领取2｜进行中1｜被挡住0｜待验收2');
+});
+
+test('claimable group has a specific empty state', () => {
+  const s = createStudioState();
+  setStudioReal(s, { ok: true, claimable: [], working: [] });
+  assert.equal(realGroupEmptyText('claimable', s.real.claimable), '目前没有可领取的单');
+  assert.equal(realGroupEmptyText('working', s.real.working), '目前没有工单');
 });

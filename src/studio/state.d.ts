@@ -3,14 +3,15 @@ export interface StudioEvent { type: StudioEventType; agent?: string; task_id?: 
 export interface StudioAction { action: 'claim_request' | 'review'; agent?: string; task_id?: string; result?: string; note?: string; ts: number }
 export interface StudioReport { taskId: string; status: 'ready' | 'rejected'; summary: string; reportUrl: string | null; reportLocal: string | null; note: string }
 export interface StudioScheduleItem { name: string; owner: string; time: string; source: string; lastResult: string; control: string }
-export interface StudioScheduleBoard { updatedAt?: string; items?: StudioScheduleItem[] }
+export interface StudioScheduleBoard { updatedAt?: string; source?: string; items?: StudioScheduleItem[] }
 export interface StudioRealTicket { id: string; title: string; status: string; deadline: string; url: string | null }
-export interface StudioRealState { ok: boolean | null; working: StudioRealTicket[]; claimable: StudioRealTicket[]; error: string | null }
+export interface StudioRealCounts { open: number | null; claimable: number | null; working: number | null; blocked: number | null; review: number | null }
+export interface StudioRealState { ok: boolean | null; working: StudioRealTicket[]; claimable: StudioRealTicket[]; counts: StudioRealCounts; error: string | null }
 export interface StudioState {
   bridge: { received: boolean; connection: 'unknown' | 'connected' | 'disconnected'; mode: string; connected: boolean | null; lastUpdateTs: number | null; note: string };
   engineer: { taskId: string | null; taskTitle: string; blocked: { taskId: string; reason: string } | null; claimPending: boolean; lastRejection: string | null };
   kimi: { status: '尚未接通' };
-  schedule: { loaded: boolean; updatedAt: string | null; items: StudioScheduleItem[] };
+  schedule: { loaded: boolean; updatedAt: string | null; simulated: boolean; items: StudioScheduleItem[] };
   real: StudioRealState;
   reports: Record<string, StudioReport>; reportOrder: string[]; reviewPending: Record<string, { result: string; note: string }>; notice: string; actions: StudioAction[];
 }
@@ -20,6 +21,9 @@ export function setStudioSchedule(state: StudioState, board: StudioScheduleBoard
 export function setStudioReal(state: StudioState, real: Partial<StudioRealState> | null): StudioState;
 export function setStudioBridgeConnection(state: StudioState, connected: boolean): StudioState;
 export function realWorkView(state: StudioState): { kind: 'mode' | 'error' | 'loading' | 'ready'; text: string };
+export function realCountsView(counts: StudioRealCounts): string;
+export function realGroupEmptyText(group: string, items: StudioRealTicket[]): string;
+export function canStudioClaim(state: StudioState): boolean;
 export function beginStudioAction(state: StudioState, payload: Omit<StudioAction, 'ts'> & { ts?: number }): StudioAction;
 export function latestReport(state: StudioState): StudioReport | null;
 export function bridgeView(state: StudioState, now?: number): { text: string; title: string; stale: boolean; note: string };
