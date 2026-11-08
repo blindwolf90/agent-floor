@@ -1,8 +1,18 @@
 import type { Anchor } from '../world/World';
-import { bridgeView, latestReport, StudioStore, type StudioReport } from './state';
+import { bridgeView, latestReport, realWorkView, StudioStore, type StudioReport, type StudioRealTicket } from './state';
 
 function esc(value: string) {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+function safeUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? esc(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 interface StudioHudActions {
@@ -81,6 +91,7 @@ export class StudioHud {
     bridge.textContent = view.text;
     bridge.classList.toggle('stale', view.stale);
     this.banner.title = view.note;
+    document.title = `MSOS 工作室 · ${view.title}`;
   }
 
   private render() {
@@ -109,12 +120,27 @@ export class StudioHud {
 
   private renderSchedule() {
     const schedule = this.studio.state.schedule;
-    if (!schedule.loaded) {
-      this.schedule.innerHTML = '<h2>排程台｜静态清单</h2><p>排程清单未载入</p>';
-      return;
-    }
-    const items = schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : '<li>模拟｜目前没有排程</li>';
-    this.schedule.innerHTML = `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${items}</ol>`;
+    const scheduleBody = schedule.loaded
+      ? `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : '<li>模拟｜目前没有排程</li>'}</ol>`
+      : '<h2>排程台｜静态清单</h2><p>排程清单未载入</p>';
+    this.schedule.innerHTML = scheduleBody + this.realMarkup();
+  }
+
+  private realMarkup() {
+    const state = this.studio.state;
+    const view = realWorkView(state);
+    const body = view.kind === 'ready'
+      ? this.realGroup('进行中', state.real.working) + this.realGroup('可领取', state.real.claimable)
+      : `<p class="studio-real-message">${view.text}</p>`;
+    return `<section class="studio-real"><h2>真实工单（只读）</h2>${body}</section>`;
+  }
+
+  private realGroup(label: string, items: StudioRealTicket[]) {
+    const body = items.length ? `<ul>${items.map((item) => {
+      const url = safeUrl(item.url);
+      return `<li><strong>${esc(item.id)}</strong><span>${esc(item.title)}</span><small>${esc(item.status)}｜截止 ${esc(item.deadline)}</small>${url ? `<a href="${url}" target="_blank" rel="noreferrer">Notion ↗</a>` : ''}</li>`;
+    }).join('')}</ul>` : '<p>目前没有工单</p>';
+    return `<section class="studio-real-group"><h3>${label}</h3>${body}</section>`;
   }
 
   private renderFile() {
