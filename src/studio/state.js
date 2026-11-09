@@ -1,20 +1,46 @@
 // ENG-160 dry-run studio state. Deliberately separate from shared/protocol.js:
 // no new event is accepted by, or changes the behaviour of, the existing server.
 
+const MODE_COPY = {
+  'dry-run': { subtitle: 'Agent Floor · 模拟', banner: '模拟模式', engineerIdle: '模拟｜等待领取任务', coo: '模拟派单与验收', kimi: '尚未接通｜模拟', launcher: '工作室｜领任务（模拟）', claim: '向 COO 领任务（模拟）', notice: '模拟｜点击 Engineer，选择「向 COO 领任务」', reason: '', prefix: '模拟｜' },
+  'notion-read': { subtitle: 'Agent Floor · 只读真实工单', banner: '只读真实工单｜不可领取', engineerIdle: '等待领取（只读模式，不可领取）', coo: '只读工单与验收', kimi: '尚未接通｜只读', launcher: '只读模式，不可领取', claim: '只读模式，不可领取', notice: '等待领取（只读模式，不可领取）', reason: '只读模式，不可领取', prefix: '' },
+  'claim-test': { subtitle: 'Agent Floor · 领取测试（隔离库）', banner: '领取测试（隔离库）', engineerIdle: '等待领取（写入隔离测试库）', coo: '隔离测试派单与验收', kimi: '尚未接通｜隔离测试', launcher: '领任务｜写入隔离测试库', claim: '向 COO 领任务｜写入隔离测试库', notice: '隔离测试｜点击 Engineer，选择「向 COO 领任务」', reason: '写入隔离测试库', prefix: '隔离测试｜' },
+  live: { subtitle: 'Agent Floor · 正式', banner: '正式模式', engineerIdle: '等待领取任务', coo: '正式派单与验收', kimi: '尚未接通｜正式', launcher: '工作室｜领任务', claim: '向 COO 领任务', notice: '点击 Engineer，选择「向 COO 领任务」', reason: '', prefix: '' },
+};
+
 export function createStudioState() {
   return {
-    bridge: { received: false, connection: 'unknown', mode: 'dry-run', connected: null, lastUpdateTs: null, note: '尚未收到桥接状态' },
+    bridge: { received: false, connection: 'unknown', mode: '', connected: null, lastUpdateTs: null, note: '尚未收到桥接状态' },
     engineer: { taskId: null, taskTitle: '模拟｜等待领取任务', blocked: null, claimPending: false, lastRejection: null },
     kimi: { status: '尚未接通' },
     schedule: { loaded: false, updatedAt: null, simulated: true, items: [] },
-    real: { ok: null, working: [], claimable: [], counts: { open: null, claimable: null, working: null, blocked: null, review: null }, error: null },
+    real: { ok: null, working: [], claimable: [], counts: { total: null, open: null, claimable: null, working: null, blocked: null, review: null }, error: null },
     reports: {},
     reportOrder: [],
     reviewPending: {},
-    notice: '模拟｜点击 Engineer，选择「向 COO 领任务」',
+    notice: '点击 Engineer，选择「向 COO 领任务」',
     actions: [],
   };
 }
+
+export function studioModeView(state) {
+  const b = state.bridge;
+  const unavailable = b.connection === 'disconnected' || b.connected === false
+    ? { subtitle: 'Agent Floor', engineerIdle: '桥接未连接', coo: '桥接未连接', kimi: '尚未接通', launcher: '桥接未连接', claim: '桥接未连接', notice: '桥接未连接', reason: '桥接未连接', prefix: '' }
+    : !b.received
+      ? { subtitle: 'Agent Floor', engineerIdle: '状态未知', coo: '状态未知', kimi: '尚未接通', launcher: '状态未知', claim: '状态未知', notice: '状态未知', reason: '状态未知', prefix: '' }
+      : null;
+  const copy = unavailable || MODE_COPY[b.mode];
+  if (!copy) return { mode: null, subtitle: 'Agent Floor', engineerIdle: '状态未知', coo: '状态未知', kimi: '尚未接通', launcher: '状态未知', claim: '状态未知', notice: '状态未知', reason: '状态未知', prefix: '', claimable: false };
+  return { mode: unavailable ? null : b.mode, ...copy, claimable: !unavailable && b.connection === 'connected' && b.connected === true && b.mode !== 'notion-read' };
+}
+
+export function studioModeText(state, value) {
+  const view = studioModeView(state);
+  if (view.mode === 'dry-run') return String(value);
+  return String(value).replace(/模拟[｜|]?/g, view.prefix).trim();
+}
+
 
 export function applyStudioEvent(state, ev) {
   if (!ev || typeof ev !== 'object') return state;
@@ -41,11 +67,11 @@ export function applyStudioEvent(state, ev) {
         lastUpdateTs: Number.isFinite(ev.last_update_ts) ? ev.last_update_ts : null,
         note: String(ev.note || '桥接状态已更新'),
       };
-      if (state.bridge.mode === 'notion-read') {
-        state.engineer.claimPending = false;
-        state.notice = '等待领取（只读模式，暂不可领）';
-      } else if (previousMode === 'notion-read' && state.bridge.mode === 'dry-run') {
-        state.notice = '模拟｜点击 Engineer，选择「向 COO 领任务」';
+      if (previousMode !== state.bridge.mode || state.bridge.mode === 'notion-read') {
+        const view = studioModeView(state);
+        if (!view.claimable) state.engineer.claimPending = false;
+        state.notice = view.notice;
+        if (!state.engineer.taskId) state.engineer.taskTitle = view.engineerIdle;
       }
       break;
     }
@@ -132,15 +158,16 @@ export function setStudioSchedule(state, board) {
   };
   state.schedule = {
     loaded: true,
-    updatedAt: board.updatedAt ? String(board.updatedAt) : '日期未提供',
+    updatedAt: board.updatedAt ? String(board.updatedAt) : '未提供',
     simulated,
     items: board.items.filter((item) => item && typeof item === 'object').map((item) => ({
       name: clean(item.name, simulated ? '模拟｜未命名排程' : '未命名排程'),
       owner: clean(item.owner),
       time: clean(item.time),
+      updatedAt: clean(item.updatedAt),
       source: clean(item.source),
       lastResult: clean(item.lastResult),
-      control: clean(item.control),
+      control: '模拟｜仅展示，不可执行',
     })),
   };
   return state;
@@ -148,6 +175,16 @@ export function setStudioSchedule(state, board) {
 
 export function setStudioBridgeConnection(state, connected) {
   state.bridge.connection = connected ? 'connected' : 'disconnected';
+  if (!connected) state.engineer.claimPending = false;
+  return state;
+}
+
+export function setStudioMode(state, mode) {
+  if (!Object.hasOwn(MODE_COPY, mode)) return state;
+  state.bridge.mode = String(mode);
+  const view = studioModeView(state);
+  if (!view.claimable) state.engineer.claimPending = false;
+  if (!state.engineer.taskId) state.engineer.taskTitle = view.engineerIdle;
   return state;
 }
 
@@ -164,13 +201,14 @@ export function setStudioReal(state, real) {
     ok: Boolean(real && real.ok === true),
     working: read(real?.working),
     claimable: read(real?.claimable),
-    counts: { open: count('open'), claimable: count('claimable'), working: count('working'), blocked: count('blocked'), review: count('review') },
+    counts: { total: count('total'), open: count('open'), claimable: count('claimable'), working: count('working'), blocked: count('blocked'), review: count('review') },
     error: real?.error ? String(real.error) : null,
   };
   return state;
 }
 
 export function realWorkView(state) {
+  if (state.bridge.connection === 'disconnected' || state.bridge.connected === false) return { kind: 'error', text: '桥接未连接' };
   if (state.bridge.mode === 'dry-run') return { kind: 'mode', text: '仅 notion-read 模式提供' };
   if (state.real.ok === false) return { kind: 'error', text: '真实工单读取失败' };
   if (state.real.ok === null) return { kind: 'loading', text: '真实工单读取中' };
@@ -179,7 +217,23 @@ export function realWorkView(state) {
 
 export function realCountsView(counts) {
   const value = (count) => Number.isFinite(count) ? String(count) : '未提供';
-  return `开放${value(counts.open)}｜可领取${value(counts.claimable)}｜进行中${value(counts.working)}｜被挡住${value(counts.blocked)}｜待验收${value(counts.review)}`;
+  return `总数 ${value(counts.total)}｜未结 ${value(counts.open)}｜进行中 ${value(counts.working)}｜可领取 ${value(counts.claimable)}`;
+}
+
+export function realWorkGroups(state) {
+  const groups = [{ key: 'claimable', label: '可领取', items: state.real.claimable }];
+  const byStatus = new Map();
+  for (const item of state.real.working) {
+    const label = item.status || '未提供';
+    if (!byStatus.has(label)) byStatus.set(label, []);
+    byStatus.get(label).push(item);
+  }
+  let index = 0;
+  for (const [label, items] of byStatus) {
+    groups.push({ key: index === 0 ? 'working' : `working-${index}`, label, items });
+    index += 1;
+  }
+  return groups;
 }
 
 export function realGroupEmptyText(group, items) {
@@ -188,7 +242,7 @@ export function realGroupEmptyText(group, items) {
 }
 
 export function canStudioClaim(state) {
-  return state.bridge.mode !== 'notion-read';
+  return studioModeView(state).claimable;
 }
 
 /** Record the intent only. Confirmation events, never clicks, complete the work. */
@@ -196,18 +250,19 @@ export function beginStudioAction(state, payload) {
   const action = { ...payload, ts: Number.isFinite(payload.ts) ? payload.ts : Date.now() };
   if (action.action === 'claim_request' && !canStudioClaim(state)) {
     state.engineer.claimPending = false;
-    state.notice = '等待领取（只读模式，暂不可领）';
+    state.notice = studioModeView(state).notice;
     return action;
   }
+  const prefix = studioModeView(state).prefix;
   state.actions.push(action);
   if (action.action === 'claim_request' && action.agent === 'engineer') {
     state.engineer.claimPending = true;
-    state.notice = '模拟｜已送出领取请求，等待确认';
+    state.notice = `${prefix}已送出领取请求，等待确认`;
   }
   if (action.action === 'review' && action.task_id) {
     const taskId = String(action.task_id);
     state.reviewPending[taskId] = { result: String(action.result || ''), note: String(action.note || '') };
-    state.notice = `模拟｜${taskId} 已送出，等待桥接确认`;
+    state.notice = `${prefix}${taskId} 已送出，等待桥接确认`;
   }
   return action;
 }
@@ -219,15 +274,15 @@ export function latestReport(state) {
 
 export function bridgeView(state, now = Date.now()) {
   const b = state.bridge;
-  if (b.connection === 'disconnected') return { text: '桥接未连接', title: '桥接未连接', stale: true, note: b.note };
+  if (b.connection === 'disconnected' || b.connected === false) return { text: '桥接未连接', title: '桥接未连接', stale: true, note: b.note };
   if (!b.received) return { text: '状态未知', title: '状态未知', stale: true, note: b.note };
-  const title = { 'dry-run': '模拟模式', 'notion-read': '只读真实工单｜真实领取未开放', live: '真实模式' }[b.mode] || '状态未知';
-  const stale = !b.connected || !b.lastUpdateTs || now - b.lastUpdateTs > 60_000;
+  const title = MODE_COPY[b.mode]?.banner || '状态未知';
+  const stale = !b.lastUpdateTs || now - b.lastUpdateTs > 60_000;
   if (stale) {
     const time = b.lastUpdateTs
       ? new Date(b.lastUpdateTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
       : '未知';
-    return { text: `${title}｜资料过时／断线，最后更新 ${time}`, title, stale: true, note: b.note };
+    return { text: `资料过时／断线，最后更新 ${time}`, title: '资料过时／断线', stale: true, note: b.note };
   }
   return { text: title, title, stale: false, note: b.note };
 }
@@ -257,6 +312,10 @@ export class StudioStore {
   }
   setReal(real) {
     setStudioReal(this.state, real);
+    this.emit();
+  }
+  setMode(mode) {
+    setStudioMode(this.state, mode);
     this.emit();
   }
   setBridgeConnection(connected) {

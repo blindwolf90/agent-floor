@@ -1,34 +1,57 @@
-# ENG-160-UI v4 — 模式文案、只读领取限制与工单计数
+# ENG-160-UI v4｜模式一致性、真实列表分组与排程来源
 
 ## STATUS
 
-DONE（dry-run／本地 notion-read 验证）。基线：fork `main` 已合并 PR #2，并推送 tag `studio-v3`；分支：`kimi/studio-ui-v4`。未修改 bridge、server、`shared/protocol.js` 或 arthur-os；未连接真实 Notion，未使用真实 token，未开放真实领取。
+DONE。基线为 fork `main`／`studio-v3` 的 `25b773f`；沿用未合并分支 `kimi/studio-ui-v4` 与 PR #3。未修改 bridge、server、`shared/protocol.js`、Notion 或 ArthurDay。
+
+## TASK
+
+让左上副标题、顶部横幅、座位名牌、底部提示与领取入口统一跟随 `dry-run`／`notion-read`／`claim-test`／`live`；真实工单使用桥接 counts 并按状态分组；排程逐行显示 `updatedAt` 与 `source`。
+
+## FINDINGS
+
+- 旧界面只有 dry-run 与 notion-read 两套硬编码文案，unknown／disconnected 仍可能落入 dry-run 领取路径。
+- 旧 counts 展示五项旧字段，不符合本轮「总数／未结／进行中／可领取」契约。
+- `working[]` 内可能包含不同状态，不能只渲染一个固定「进行中」组。
+- 排程项缺少逐行 `updatedAt`，非模拟来源的清理逻辑还会移除固定的「模拟｜仅展示，不可执行」标注。
+
+## ROOT CAUSE
+
+模式文案与按钮状态分散在 HUD、boot 和事件中，没有单一模式映射；列表与排程渲染也依赖旧字段形状，导致新增 mode 或 counts 后各区域不一致。
 
 ## CHANGED
 
-- `src/studio/state.js`、`state.d.ts`：notion-read 下固定只读提示并在状态层拦截 claim intent，不记录 action；横幅改为「只读真实工单｜真实领取未开放」。新增五项 counts、`realCountsView()` 与可领取空态文案。排程板显示 updatedAt，并按 JSON `source` 是否严格等于「模拟」决定是否清理各字段的「模拟」字样。
-- `src/studio/boot.ts`：发送动作前再次拦截 notion-read claim，保证不会 POST `/actions`；更新合成只读 capture 的计数与无「模拟」文案。
-- `src/studio/StudioHud.ts`：notion-read 的 Engineer 名牌与底部提示固定为「等待领取（只读模式，暂不可领）」；领任务按钮和角色菜单 claim 按钮置灰并显示「只读模式，真实领取未开放」。真实工单顶部显示 open／claimable／working／blocked／review 计数；可领取分组置前，空时显示「目前没有可领取的单」；列表仍无动作按钮。
-- `src/studio/studio.css`：只读按钮置灰、完整只读名牌、计数单行与手机布局。
-- `public/schedule-board.json`：样本增加顶层 `source: "模拟"`，保留现有字段与 updatedAt。
-- `test/studio.test.mjs`：新增 3 项测试（notion-read 不发 claim、五项计数含 0、可领取空态）；原排程测试增加非模拟 source 清理文案的断言。
-- `scripts/studio-browser.mjs`：新增 v4 双模式检查；通过 CDP 网络记录确认 notion-read 点击后 `/actions` 请求数为 0，同时检查按钮、菜单、计数、分组顺序、空态和完整文案。
-- `scripts/studio-v4-fake-notion.mjs`：仅监听 `127.0.0.1:4320` 的合成查询样本，供未修改的 bridge 以 `--notion-read` 验证；不含真实编号、主机或凭证。
-- `docs/eng-160/evidence/`：新增 v4 双模式截图并更新浏览器检查 JSON 与回归截图。
+- `src/studio/state.js`：新增四模式统一映射、显示文案转换、真实工单状态分组、四项 counts、断线领取拦截与 schedule 字段解析。
+- `src/studio/state.d.ts`：补齐 mode、counts、schedule 与分组函数类型。
+- `src/studio/StudioHud.ts`：副标题、横幅、三席名牌、通知、领取按钮、菜单和报告文案统一使用模式映射；真实列表可领取置顶、按状态分组，并有独立空态／错误态。
+- `src/studio/boot.ts`：接收 `GET /studio/state` 的 `mode` 与可选 `schedule`，世界内 Engineer 状态同步跟随模式；离线阻止动作。
+- `src/studio/transport.ts`：扩展只读快照类型，不改变传输地址、事件或动作协议。
+- `public/schedule-board.json`：模拟样本增加逐行 `updatedAt`。
+- `test/studio.test.mjs`：覆盖四模式、counts／分组一致性、断线无模式文案且不记录动作，以及排程新字段。
+- `scripts/studio-v4-modes.mjs`：自启动 Vite／Chrome 的 DOM 回归与截图脚本，不启动或修改桥接。
+- `docs/eng-160/evidence/`：新增两张截图与 `studio-v4-mode-checks.json`。
 
 ## TESTED
 
-- `npm test`：27/27 PASS（原 24 项＋新增 3 项）。
-- `npm run build`：TypeScript 与 Vite production build PASS。
-- `node scripts/studio-browser.mjs`：390×844 mobile emulation PASS；v1／v2／v3 回归通过，dry-run 领取到验收端到端通过。
-- notion-read 使用本地 bridge `--notion-read`＋本机假查询端点，五项计数为 `3／0／1／1／1`，可领取为空且置前；点击底部入口和角色菜单 claim 均未发 `/actions`，`notionReadClaimRequests: 0`。
-- 两张最终截图已逐张检查，只读名牌与按钮原因无省略或裁切。
+- `npx tsc --noEmit`：PASS。
+- `npm test`：27/27 PASS。
+- `npx vite build`：PASS，62 modules transformed。
+- `node scripts/studio-v4-modes.mjs`：PASS；四种 mode 的副标题／横幅／按钮状态均通过真实 DOM 断言。
+- counts 使用桥接值；可领取组 1 张单＝`counts.claimable: 1`；空列表与读取错误分别显示「目前没有真实工单」与「真实工单读取失败」。
+- 断线时副标题仅为 `Agent Floor`，横幅为「桥接未连接」， launcher 与菜单均禁用，记录动作数为 0。
 
-## 截图
+## EVIDENCE
 
-- `v4-dry-run.png`：本地 dry-run bridge；保留「模拟｜…」与可用领取入口。
-- `v4-notion-read.png`：本地 notion-read bridge＋合成查询样本；只读横幅、五项计数、可领取空态、完整名牌与置灰入口。
+- `docs/eng-160/evidence/studio-v4-notion-read.png`：1440×900 全屏，只读文案、四项 counts、可领取置顶、状态分组、Notion 链接与排程新字段。
+- `docs/eng-160/evidence/studio-v4-bridge-offline.png`：1440×900 全屏，无模式文案，桥接未连接且领取禁用。
+- `docs/eng-160/evidence/studio-v4-mode-checks.json`：机器可读 DOM 检查结果。
 
-## 未接真实的部分
+## RISKS
 
-真实 Notion 查询、真实凭证、真实领取、执行与验收均未连接或启用。notion-read 证据来自本机合成数据；Kimi 席位仍固定「尚未接通」；排程仍是静态 JSON；没有 ArthurDay 入口或新增业务动作。
+- 截图使用本地合成只读数据，没有读取真实 Notion，也没有真实领取或写入。
+- `claim-test` 与 `live` 本轮只验证前端模式状态，不代表桥接已经支持真实动作。
+- 排程仍可使用静态 JSON；桥接提供 `schedule` 时才采用桥接快照。所有排程保留「模拟｜仅展示，不可执行」。
+
+## NEXT
+
+等待 **ENG-160-M6 v3** 桥接提供并验证 `claim-test` 隔离测试库后，再做真实领取端到端验证；本轮不开放或声称完成该验证。

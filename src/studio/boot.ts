@@ -4,11 +4,11 @@ import { runDryRun } from '../../sim/dry-run.js';
 import { store } from '../core/store';
 import { World } from '../world/World';
 import { StudioHud } from './StudioHud';
-import { canStudioClaim, latestReport, StudioStore, type StudioEvent } from './state';
+import { canStudioClaim, latestReport, studioModeText, studioModeView, StudioStore, type StudioEvent } from './state';
 import { fetchStudioState, postStudioAction, subscribeBridge, useBridge, type StudioActionPayload } from './transport';
 
 export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
-  document.title = 'MSOS 工作室 · 模拟模式';
+  document.title = 'MSOS 工作室 · 状态未知';
   document.documentElement.dataset.theme = 'light';
   app.classList.add('studio-mode');
   stage.classList.add('studio-stage');
@@ -23,7 +23,7 @@ export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
 
   const sendAction = async (payload: Omit<StudioActionPayload, 'ts'>) => {
     if (payload.action === 'claim_request' && !canStudioClaim(studio.state)) {
-      studio.state.notice = '等待领取（只读模式，暂不可领）';
+      studio.state.notice = studioModeView(studio.state).notice;
       studio.emit();
       return;
     }
@@ -31,7 +31,7 @@ export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
     try {
       await postStudioAction(action);
     } catch {
-      studio.state.notice = useBridge ? '桥接未接受请求，请检查连接' : '模拟｜本地动作处理器未接受请求，请重试';
+      studio.state.notice = useBridge ? '桥接未接受请求，请检查连接' : studioModeText(studio.state, '模拟｜本地动作处理器未接受请求，请重试');
       if (useBridge) studio.setBridgeConnection(false);
       studio.state.engineer.claimPending = false;
       if (action.task_id) delete studio.state.reviewPending[action.task_id];
@@ -69,8 +69,13 @@ export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
   studio.subscribe(() => {
     const current = store.state.agents.engineer;
     const engineer = studio.state.engineer;
-    const status = engineer.blocked ? 'waiting' : engineer.taskId ? 'working' : 'idle';
-    const activity = engineer.blocked ? `模拟｜举手：${engineer.blocked.reason}` : engineer.taskTitle;
+    const mode = studioModeView(studio.state);
+    const status = !mode.claimable ? 'idle' : engineer.blocked ? 'waiting' : engineer.taskId ? 'working' : 'idle';
+    const activity = !mode.claimable
+      ? mode.engineerIdle
+      : engineer.blocked
+        ? `${mode.prefix}举手：${studioModeText(studio.state, engineer.blocked.reason)}`
+        : engineer.taskId ? studioModeText(studio.state, engineer.taskTitle) : mode.engineerIdle;
     if (current && (current.status !== status || current.activity !== activity)) {
       store.applyLocal({ type: 'status', agent: 'engineer', status, activity });
     }
@@ -96,7 +101,9 @@ export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
     if (!useBridge || studio.state.bridge.mode === 'dry-run') return;
     try {
       const snapshot = await fetchStudioState();
+      if (snapshot.mode) studio.setMode(snapshot.mode);
       studio.setReal(snapshot.real || null);
+      if (snapshot.schedule) studio.setSchedule(snapshot.schedule);
     } catch {
       studio.setReal(null);
     }
@@ -120,7 +127,7 @@ export async function bootStudio(app: HTMLElement, stage: HTMLElement) {
     hud.openReport();
   } else if (capture === 'notion-read') {
     dispatch({ type: 'bridge_status', mode: 'notion-read', connected: true, last_update_ts: now, note: '只读展示，未读取 Notion' });
-    studio.setReal({ ok: true, counts: { open: 2, claimable: 1, working: 1, blocked: 0, review: 0 }, working: [{ id: 'SIM-READ-001', title: '只读｜进行中的工单', status: '进行中', deadline: '2026-11-07', url: 'https://app.notion.com/' }], claimable: [{ id: 'SIM-READ-002', title: '只读｜可领取的工单', status: '可领取', deadline: '2026-11-08', url: 'https://app.notion.com/' }] });
+    studio.setReal({ ok: true, counts: { total: 2, open: 2, claimable: 1, working: 1, blocked: 0, review: 0 }, working: [{ id: 'SIM-READ-001', title: '只读｜进行中的工单', status: '进行中', deadline: '2026-11-07', url: 'https://app.notion.com/' }], claimable: [{ id: 'SIM-READ-002', title: '只读｜可领取的工单', status: '可领取', deadline: '2026-11-08', url: 'https://app.notion.com/' }] });
   } else if (capture === 'offline') {
     dispatch({ type: 'bridge_status', mode: 'dry-run', connected: false, last_update_ts: now - 65_000, note: '模拟｜桥接断线证据' });
   } else if (capture === 'bridge-offline') {
