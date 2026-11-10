@@ -2,7 +2,7 @@
 // Default (?studio): controlled transport to the local MSOS bridge (http://127.0.0.1:4318, override with ?bridge=).
 //   POST /actions carries the intent only; results arrive as bridge events on GET /studio/events (SSE).
 // Kimi's local dry-run handler stays for ?simulate and ?capture (UI evidence runs), and never touches the network.
-import type { StudioEvent, StudioRealState } from './state';
+import type { StudioEvent, StudioRealState, StudioScheduleBoard } from './state';
 
 export type StudioActionPayload = {
   action: 'claim_request' | 'review';
@@ -50,7 +50,7 @@ export function subscribeBridge(dispatch: (event: StudioEvent) => void, onConnec
   return es;
 }
 
-export async function fetchStudioState(): Promise<{ mode?: string; real?: StudioRealState | null }> {
+export async function fetchStudioState(): Promise<{ mode?: string; real?: StudioRealState | null; schedule?: StudioScheduleBoard | null }> {
   const response = await fetch(BRIDGE + '/studio/state', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('bridge state unavailable: ' + response.status);
   return response.json();

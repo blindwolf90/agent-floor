@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "viewport": "1440x900",
+  "modes": [
+    "dry-run",
+    "notion-read",
+    "claim-test",
+    "live"
+  ],
+  "notionRead": {
+    "counts": "总数 2｜未结 2｜进行中 1｜可领取 1",
+    "groups": [
+      {
+        "key": "claimable",
+        "items": 1
+      },
+      {
+        "key": "working",
+        "items": 1
+      }
+    ],
+    "claimRequests": 0
+  },
+  "emptyState": "目前没有真实工单",
+  "errorState": "真实工单读取失败",
+  "offline": {
+    "subtitle": "Agent Floor",
+    "banner": "桥接未连接",
+    "launcher": "桥接未连接",
+    "disabled": true,
+    "claimDisabled": true,
+    "actions": 0
+  },
+  "screenshots": [
+    "studio-v4-notion-read.png",
+    "studio-v4-bridge-offline.png"
+  ],
+  "bridgeModified": false,
+  "notionReadFromRealService": false
+}

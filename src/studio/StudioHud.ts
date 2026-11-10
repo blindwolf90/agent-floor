@@ -1,5 +1,5 @@
 import type { Anchor } from '../world/World';
-import { bridgeView, latestReport, realWorkView, StudioStore, type StudioReport, type StudioRealTicket } from './state';
+import { bridgeView, canStudioClaim, latestReport, realCountsView, realGroupEmptyText, realWorkGroups, realWorkView, studioModeText, studioModeView, StudioStore, type StudioRealCounts, type StudioReport, type StudioRealTicket } from './state';
 
 function esc(value: string) {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -37,7 +37,7 @@ export class StudioHud {
   constructor(container: HTMLElement, private studio: StudioStore, private actions: StudioHudActions) {
     this.root.className = 'studio-hud';
     this.banner.className = 'studio-banner';
-    this.banner.innerHTML = '<div class="studio-brand"><strong>MSOS 工作室</strong><span>Agent Floor · dry-run</span></div><div class="studio-bridge" role="status"></div>';
+    this.banner.innerHTML = '<div class="studio-brand"><strong>MSOS 工作室</strong><span>Agent Floor</span></div><div class="studio-bridge" role="status"></div>';
     this.notice.className = 'studio-notice';
     this.notice.setAttribute('role', 'status');
     this.notice.setAttribute('aria-live', 'polite');
@@ -87,7 +87,9 @@ export class StudioHud {
 
   tick() {
     const view = bridgeView(this.studio.state);
+    const mode = studioModeView(this.studio.state);
     const bridge = this.banner.querySelector<HTMLElement>('.studio-bridge')!;
+    this.banner.querySelector<HTMLElement>('.studio-brand span')!.textContent = mode.subtitle;
     bridge.textContent = view.text;
     bridge.classList.toggle('stale', view.stale);
     this.banner.title = view.note;
@@ -96,23 +98,34 @@ export class StudioHud {
 
   private render() {
     const state = this.studio.state;
+    const mode = studioModeView(state);
+    const readOnly = !canStudioClaim(state);
     this.tick();
-    this.notice.textContent = state.notice;
+    this.notice.textContent = readOnly ? mode.notice : studioModeText(state, state.notice);
     const engineer = this.tags.get('engineer')!;
-    engineer.querySelector('.studio-task')!.textContent = state.engineer.blocked
-      ? '举手 · 点击查看阻塞原因'
-      : state.engineer.claimPending
-        ? '已送出领取请求，等待确认'
-        : state.engineer.taskTitle;
-    engineer.classList.toggle('blocked', Boolean(state.engineer.blocked));
-    engineer.classList.toggle('pending', state.engineer.claimPending);
-    this.tags.get('coo')!.querySelector('.studio-task')!.textContent = state.engineer.taskId ? `模拟工单 ${state.engineer.taskId}` : '模拟派单与验收';
-    this.tags.get('kimi')!.querySelector('.studio-task')!.textContent = state.kimi.status;
+    engineer.querySelector('.studio-task')!.textContent = readOnly
+      ? mode.engineerIdle
+      : state.engineer.blocked
+        ? `${mode.prefix}举手 · 点击查看阻塞原因`
+        : state.engineer.claimPending
+          ? `${mode.prefix}已送出领取请求，等待确认`
+          : state.engineer.taskId ? studioModeText(state, state.engineer.taskTitle) : mode.engineerIdle;
+    engineer.classList.toggle('blocked', !readOnly && Boolean(state.engineer.blocked));
+    engineer.classList.toggle('pending', !readOnly && state.engineer.claimPending);
+    engineer.classList.toggle('read-only', readOnly);
+    this.tags.get('coo')!.querySelector('.studio-task')!.textContent = state.engineer.taskId && mode.mode !== 'notion-read'
+      ? `${mode.coo} · ${state.engineer.taskId}`
+      : mode.coo;
+    this.tags.get('kimi')!.querySelector('.studio-task')!.textContent = mode.kimi;
 
+    this.launcher.disabled = readOnly;
+    this.launcher.textContent = mode.launcher;
     const claim = this.menu.querySelector<HTMLButtonElement>('.studio-claim')!;
-    claim.disabled = state.engineer.claimPending;
-    claim.textContent = state.engineer.claimPending ? '已送出领取请求，等待确认' : '向 COO 领任务';
-    this.menu.querySelector<HTMLElement>('.studio-menu-reason')!.textContent = state.engineer.lastRejection || '';
+    claim.disabled = readOnly || state.engineer.claimPending;
+    claim.textContent = state.engineer.claimPending ? `${mode.prefix}已送出领取请求，等待确认` : mode.claim;
+    this.menu.querySelector<HTMLElement>('.studio-menu-reason')!.textContent = readOnly
+      ? mode.reason
+      : studioModeText(state, state.engineer.lastRejection || '') || mode.reason;
     this.renderSchedule();
     this.renderFile();
     this.renderModal();
@@ -120,8 +133,9 @@ export class StudioHud {
 
   private renderSchedule() {
     const schedule = this.studio.state.schedule;
+    const empty = schedule.simulated ? '模拟｜目前没有排程' : '目前没有排程';
     const scheduleBody = schedule.loaded
-      ? `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '日期未提供')}</h2><ol>${schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>来源</dt><dd>${esc(item.source)}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : '<li>模拟｜目前没有排程</li>'}</ol>`
+      ? `<h2>排程台｜静态清单，更新于 ${esc(schedule.updatedAt || '未提供')}</h2><ol>${schedule.items.length ? schedule.items.map((item) => `<li><strong>${esc(item.name)}</strong><span>${esc(item.time)}｜${esc(item.owner)}</span><dl><div><dt>updatedAt</dt><dd>${esc(item.updatedAt || '未提供')}</dd></div><div><dt>source</dt><dd>${esc(item.source || '未提供')}</dd></div><div><dt>上次结果</dt><dd>${esc(item.lastResult)}</dd></div><div><dt>控制</dt><dd>${esc(item.control)}</dd></div></dl></li>`).join('') : `<li>${empty}</li>`}</ol>`
       : '<h2>排程台｜静态清单</h2><p>排程清单未载入</p>';
     this.schedule.innerHTML = scheduleBody + this.realMarkup();
   }
@@ -129,18 +143,28 @@ export class StudioHud {
   private realMarkup() {
     const state = this.studio.state;
     const view = realWorkView(state);
-    const body = view.kind === 'ready'
-      ? this.realGroup('进行中', state.real.working) + this.realGroup('可领取', state.real.claimable)
-      : `<p class="studio-real-message">${view.text}</p>`;
+    let body = `<p class="studio-real-message">${view.text}</p>`;
+    if (view.kind === 'ready') {
+      const groups = realWorkGroups(state);
+      const tickets = groups.map((group) => this.realGroup(group.label, group.items, group.key)).join('');
+      const empty = state.real.claimable.length === 0 && state.real.working.length === 0
+        ? '<p class="studio-real-message">目前没有真实工单</p>'
+        : tickets;
+      body = this.realCounts(state.real.counts) + empty;
+    }
     return `<section class="studio-real"><h2>真实工单（只读）</h2>${body}</section>`;
   }
 
-  private realGroup(label: string, items: StudioRealTicket[]) {
+  private realCounts(counts: StudioRealCounts) {
+    return `<p class="studio-real-counts">${realCountsView(counts)}</p>`;
+  }
+
+  private realGroup(label: string, items: StudioRealTicket[], group: string) {
     const body = items.length ? `<ul>${items.map((item) => {
       const url = safeUrl(item.url);
       return `<li><strong>${esc(item.id)}</strong><span>${esc(item.title)}</span><small>${esc(item.status)}｜截止 ${esc(item.deadline)}</small>${url ? `<a href="${url}" target="_blank" rel="noreferrer">Notion ↗</a>` : ''}</li>`;
-    }).join('')}</ul>` : '<p>目前没有工单</p>';
-    return `<section class="studio-real-group"><h3>${label}</h3>${body}</section>`;
+    }).join('')}</ul>` : `<p>${realGroupEmptyText(group, items)}</p>`;
+    return `<section class="studio-real-group" data-group="${esc(group)}"><h3>${esc(label)}</h3>${body}</section>`;
   }
 
   private renderFile() {
@@ -148,10 +172,12 @@ export class StudioHud {
     this.file.classList.toggle('show', Boolean(report));
     this.file.classList.toggle('rejected', report?.status === 'rejected');
     if (!report) return;
+    const mode = studioModeView(this.studio.state);
+    const reportLabel = studioModeText(this.studio.state, '模拟报告');
     this.file.querySelector('.studio-file-copy')!.textContent = report.status === 'rejected'
-      ? `${report.taskId} · 退回修改`
-      : `${report.taskId} · 模拟报告 · 待验收`;
-    this.file.setAttribute('aria-label', `打开 ${report.taskId} 模拟报告`);
+      ? `${report.taskId} · ${mode.prefix}退回修改`
+      : `${report.taskId} · ${reportLabel} · 待验收`;
+    this.file.setAttribute('aria-label', `打开 ${report.taskId} ${reportLabel}`);
   }
 
   frame(anchors: Anchor[], reportAnchor: Anchor | null) {
@@ -206,14 +232,15 @@ export class StudioHud {
     this.modal.classList.toggle('show', Boolean(this.modalKind));
     if (!this.modalKind) { this.modal.innerHTML = ''; return; }
     const close = '<button type="button" class="studio-close" aria-label="关闭">×</button>';
+    const mode = studioModeView(this.studio.state);
     let body = '';
     if (this.modalKind === 'coo') {
-      body = `${close}<span class="studio-kicker">COO · 模拟角色</span><h2>任务与验收</h2><p>模拟｜COO 负责确认领取与验收结果。此页面不会连接真实 COO 系统。</p>`;
+      body = `${close}<span class="studio-kicker">COO · ${esc(mode.coo)}</span><h2>任务与验收</h2><p>${esc(mode.prefix)}COO 负责确认领取与验收结果；结果仅由桥接事件确认。</p>`;
     } else if (this.modalKind === 'kimi') {
       body = `${close}<p class="studio-kimi-message">执行入口待 Engineer 核实</p>`;
     } else if (this.modalKind === 'blocked') {
       const blocked = this.studio.state.engineer.blocked!;
-      body = `${close}<span class="studio-kicker">${esc(blocked.taskId)} · 模拟阻塞</span><h2>Engineer 举手了</h2><p class="studio-reason">${esc(blocked.reason)}</p><p class="studio-help">关闭窗口不会清除未解决标记；需由后续 dry-run 事件处理。</p>`;
+      body = `${close}<span class="studio-kicker">${esc(blocked.taskId)} · ${esc(mode.prefix)}阻塞</span><h2>Engineer 举手了</h2><p class="studio-reason">${esc(studioModeText(this.studio.state, blocked.reason))}</p><p class="studio-help">关闭窗口不会清除未解决标记；需由后续桥接事件处理。</p>`;
     } else {
       const report = latestReport(this.studio.state)!;
       body = this.reportBody(report);
@@ -225,19 +252,22 @@ export class StudioHud {
 
   private reportBody(report: StudioReport) {
     const pending = this.studio.state.reviewPending[report.taskId];
+    const mode = studioModeView(this.studio.state);
+    const reportLabel = studioModeText(this.studio.state, '模拟报告');
     const link = report.reportLocal
-      ? `<a class="studio-report-link" href="${esc(report.reportLocal)}" target="_blank" rel="noreferrer">打开本地模拟报告</a>`
+      ? `<a class="studio-report-link" href="${esc(report.reportLocal)}" target="_blank" rel="noreferrer">打开本地${esc(reportLabel)}</a>`
       : report.reportUrl
-        ? `<a class="studio-report-link" href="${esc(report.reportUrl)}" target="_blank" rel="noreferrer">打开模拟报告链接</a>`
-        : '<span class="studio-help">模拟｜未提供报告链接</span>';
-    return `<button type="button" class="studio-close" aria-label="关闭">×</button><span class="studio-kicker">${esc(report.taskId)} · ${report.status === 'rejected' ? '模拟退回' : '待验收'}</span><h2>桌上报告</h2><p class="studio-summary">${esc(report.summary)}</p>${link}${report.note ? `<p class="studio-reason">${esc(report.note)}</p>` : ''}<label class="studio-note-label" for="review-note">验收备注（模拟）</label><textarea id="review-note" rows="3">${esc(pending?.note || '')}</textarea><p class="studio-pending">${pending ? '已送出，等待桥接确认' : '只有收到 review_result 才会改变文件状态'}</p><div class="studio-review-actions"><button type="button" class="studio-approve" ${pending ? 'disabled' : ''}>验收通过</button><button type="button" class="studio-return" ${pending ? 'disabled' : ''}>退回修改</button></div>`;
+        ? `<a class="studio-report-link" href="${esc(report.reportUrl)}" target="_blank" rel="noreferrer">打开${esc(reportLabel)}链接</a>`
+        : `<span class="studio-help">${esc(mode.prefix)}未提供报告链接</span>`;
+    return `<button type="button" class="studio-close" aria-label="关闭">×</button><span class="studio-kicker">${esc(report.taskId)} · ${report.status === 'rejected' ? `${esc(mode.prefix)}退回` : '待验收'}</span><h2>桌上报告</h2><p class="studio-summary">${esc(studioModeText(this.studio.state, report.summary))}</p>${link}${report.note ? `<p class="studio-reason">${esc(studioModeText(this.studio.state, report.note))}</p>` : ''}<label class="studio-note-label" for="review-note">验收备注（${esc(mode.subtitle.replace('Agent Floor · ', ''))}）</label><textarea id="review-note" rows="3">${esc(pending?.note || '')}</textarea><p class="studio-pending">${pending ? '已送出，等待桥接确认' : '只有收到 review_result 才会改变文件状态'}</p><div class="studio-review-actions"><button type="button" class="studio-approve" ${pending ? 'disabled' : ''}>验收通过</button><button type="button" class="studio-return" ${pending ? 'disabled' : ''}>退回修改</button></div>`;
   }
 
   private bindReview() {
     const report = latestReport(this.studio.state);
     if (!report) return;
     const note = this.modal.querySelector<HTMLTextAreaElement>('#review-note')!;
-    this.modal.querySelector('.studio-approve')?.addEventListener('click', () => this.actions.review(report.taskId, 'approved', note.value || '模拟｜验收通过'));
-    this.modal.querySelector('.studio-return')?.addEventListener('click', () => this.actions.review(report.taskId, 'returned', note.value || '模拟｜退回修改'));
+    const prefix = studioModeView(this.studio.state).prefix;
+    this.modal.querySelector('.studio-approve')?.addEventListener('click', () => this.actions.review(report.taskId, 'approved', note.value || `${prefix}验收通过`));
+    this.modal.querySelector('.studio-return')?.addEventListener('click', () => this.actions.review(report.taskId, 'returned', note.value || `${prefix}退回修改`));
   }
 }

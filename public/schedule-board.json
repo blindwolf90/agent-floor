@@ -1,10 +1,12 @@
 {
   "updatedAt": "2026-11-06",
+  "source": "模拟",
   "items": [
     {
       "name": "模拟｜晨间领任务检查",
       "owner": "模拟 COO",
       "time": "09:17",
+      "updatedAt": "2026-11-09 09:17 +08:00",
       "source": "模拟排程清单",
       "lastResult": "模拟｜等待确认",
       "control": "模拟｜仅展示，不可执行"

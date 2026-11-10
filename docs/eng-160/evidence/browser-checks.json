@@ -12,13 +12,16 @@
     "return",
     "blocked reason",
     "local bridge end-to-end",
-    "offline claim refusal"
+    "offline claim refusal",
+    "notion-read disabled claim"
   ],
   "externalOrigins": [
     "http://127.0.0.1:5175"
   ],
-  "bridgeEndToEnd": "dry-run only",
+  "bridgeEndToEnd": "dry-run plus local-only notion-read",
   "notionReadCapture": "synthetic; no Notion read",
+  "notionReadBridge": "local fake query endpoint; no real Notion",
+  "notionReadClaimRequests": 0,
   "offlineFakeConfirmation": false,
   "screenshots": [
     "default.png",
@@ -30,6 +33,8 @@
     "v2-mobile-launcher.png",
     "v3-notion-read.png",
     "v3-approved.png",
-    "v3-disconnected.png"
+    "v3-disconnected.png",
+    "v4-dry-run.png",
+    "v4-notion-read.png"
   ]
 }
